@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "survey-viz"
-version = "0.2.0"
+version = "0.3.0"
 description = "Plain-English descriptions to vertical map frame sequences: deterministic parser, spec, and offline renderer."
 readme = "README.md"
 license = { text = "MIT" }

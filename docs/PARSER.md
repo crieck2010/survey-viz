@@ -34,21 +34,47 @@ san-francisco-bay.
 
 | VizSpec.variable | keywords |
 |---|---|
-| `sst` | sst, temperature(s), thermal, warmth, warm, cold, heat, degree(s), celsius, °c, deg c |
+| `sst` | sst, temperature(s), thermal, warmth, warm, cold, degree(s), celsius, °c, deg c |
 | `currents` | current(s), flow(s), stream(s), velocity, circulation, drift |
 | `chlorophyll` | chlorophyll, chl, algae, algal, bloom(s), phytoplankton |
+| `wind` *(ERA5)* | wind(s), windy, gale(s), gust(s) |
+| `msl` *(ERA5)* | pressure(s), isobar(s), sea-level pressure |
+| `t2m` *(ERA5)* | air temperature(s), atmospheric temperature(s), heatwave(s), **heat** |
+| `tp` *(ERA5)* | rain, rainfall, precipitation, deluge(s), downpour(s) |
 
 Rules:
 
 - **Earliest keyword in the text wins.** "temperature and currents" → `sst`;
   "currents and temperature" → `currents`. (Deterministic, no priority list
   to memorize.)
+- **Storm keywords** (`storm(s)`, `cyclone(s)`, `hurricane(s)`, `typhoon(s)`)
+  compete in the same earliest-wins race and map to the
+  **`wind` + `overlays=["msl"]` combination**: a wind base map with pressure
+  isobars overlaid. If another variable keyword appears *earlier* in the
+  text, that variable wins without the overlay (the storm keyword only
+  fires when it is the earliest variable keyword).
+- **`heat` means air heat.** The disambiguation rule (v0.3.0): bare "heat"
+  (as in "heat in Texas", "the heat last summer") maps to ERA5 2-m air
+  temperature (`t2m`), not water temperature. `warm` / `warmth` / `cold` /
+  `thermal` still map to SST — they describe water in every existing test
+  ("superior warmth", "cold water", "thermal map") and stay backward
+  compatible. "air temperature" and "heatwave" are unambiguous `t2m`.
 - **No variable keyword → `sst`.** This is the documented default rule:
   "Show me Lake Superior" is a temperature visualization. Rationale: sst is
-  the only variable with a fetch adapter today (GLSEA), so the default keeps
-  every parse actionable.
+  the historical default variable; the default keeps every parse actionable.
 - No `UnparseableDescription` is raised for a missing variable — only for a
   missing region, conflicting time phrases, or an invalid year range.
+
+## 2a. Overlays
+
+`VizSpec.overlays` (max 1 in v0.3.0) names contour overlays drawn over the
+base-variable map. Today the only producer is the storm combination
+(`overlays=["msl"]` → isobars over the wind map). The renderer draws one
+contour per frame with per-frame levels (4 hPa steps for `msl`), labeled
+in the overlay's units. If the fetched field cannot supply the overlay
+grid, `render_viz` raises `ValueError` rather than silently dropping it.
+`VizSpec` rejects an overlay that duplicates the base variable or exceeds
+the cap; v0.2.0 spec dicts (no `"overlays"` key) deserialize unchanged.
 
 ## 3. Time phrases
 
@@ -96,8 +122,10 @@ resolution — keywords `high resolution` / `high-resolution`, `ultra`,
 `coastal detail`, `1 km`, `kilometre`/`kilometer` — **and** the variable
 is SST. Anything else leaves `source` empty (`""`), so
 `viz.sources.resolve_source` applies the regional default at fetch time:
-SST over the 5 Great Lakes → `glsea`, SST anywhere else → `oisst`.
-Non-SST variables never pin a source (MUR is SST-only).
+SST over the 5 Great Lakes → `glsea`, SST anywhere else → `oisst`,
+`wind`/`msl`/`t2m`/`tp` anywhere → `era5` (Copernicus ERA5 reanalysis via
+the CDS API — fetchable in **any** region). `currents`/`chlorophyll` have
+no adapter yet → `""`, and `is_fetchable` refuses them honestly.
 
 Examples:
 
@@ -107,6 +135,12 @@ Examples:
   `source=""` → resolves to `oisst` (NOAA OISST v2.1, 0.25°)
 - "Lake Superior surface temperature over the past 5 years" →
   `source=""` → resolves to `glsea` (NOAA GLSEA)
+- "North Atlantic winds over the past year" → `variable="wind"`,
+  `source=""` → resolves to `era5` (Copernicus ERA5, 10-m wind)
+- "Hurricane conditions in the Gulf of Mexico last summer" →
+  `variable="wind"`, `overlays=["msl"]`, `source=""` → `era5`
+- "Air temperature across the US East Coast this year" →
+  `variable="t2m"`, `region_key="us-east-coast"`, `source=""` → `era5`
 
 ## 7. Failure mode
 

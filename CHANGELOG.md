@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-26
+
+### Added
+- ERA5 atmosphere variables: `VizSpec.variable` now also accepts `"wind"`
+  (10-m wind), `"msl"` (mean sea-level pressure), `"t2m"` (2-m air
+  temperature), and `"tp"` (precipitation) — the short keys of
+  `survey-currents` v0.4.0's new `currents.era5` adapter (Copernicus ERA5
+  hourly reanalysis, 1940–present, 0.25°, free CDS account).
+- `VizSpec.overlays`: optional contour overlays over the base-variable map
+  (max 1 in v0.3.0; each must differ from the base variable). Backward
+  compatible — v0.2.0 spec dicts without `"overlays"` deserialize unchanged.
+- Parser: storm keywords (`storm(s)`, `cyclone(s)`, `hurricane(s)`,
+  `typhoon(s)`) map to `wind` + `overlays=["msl"]` (wind map with pressure
+  isobars) in the same earliest-wins race as other variable keywords;
+  `wind(s)`/`windy`/`gale(s)`/`gust(s)` → `wind`;
+  `pressure(s)`/`isobar(s)`/`sea-level pressure` → `msl`;
+  `air temperature(s)`/`atmospheric temperature(s)`/`heatwave(s)`/`heat` →
+  `t2m`; `rain`/`rainfall`/`precipitation`/`deluge(s)`/`downpour(s)` → `tp`.
+- Renderer: draws contour overlays per frame (levels recomputed from each
+  frame's data range; `msl` every 4 hPa, labeled), footer names the
+  overlay; raises `ValueError` if the field cannot supply a requested
+  overlay grid — never silently dropped. `Era5Field` duck-types in via
+  its `.values` property + `.overlay_grids`.
+- Source routing: `default_source` returns `"era5"` for the four ERA5
+  variables in any region; new `"era5"` adapter in `fetch_for_source`
+  (`survey-currents>=0.4.0`, `currents.era5.fetch_era5`).
+- New gazetteer region `us-east-coast` ([-82, 25, -65, 45]); 34 regions
+  total. Region `notes` updated: ERA5 atmosphere variables are fetchable
+  in every region.
+
+### Changed
+- **Disambiguation:** bare `heat` now means air heat (`t2m`, ERA5), not
+  water temperature. `warm`/`warmth`/`cold`/`thermal` stay SST (backward
+  compatible). Documented in `docs/PARSER.md` §2.
+- `docs/PARSER.md`: new §2a (overlays), updated variable table, storm rule,
+  heat disambiguation, and ERA5 source-routing examples.
+
 ## [0.2.0] - 2026-09-26
 
 ### Added

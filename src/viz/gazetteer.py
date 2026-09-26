@@ -8,10 +8,10 @@ module resolves the file in the following order:
 2. ``<repo-root>/data/regions.yaml`` (src-layout checkout);
 3. ``src/viz/data/regions.yaml`` inside the installed package.
 
-Only the 5 Great Lakes are *fetchable* today (via the GLSEA adapter in
-survey-currents v0.2.0). Every other region parses fine but fetching raises
-a clear "no adapter yet" error — see :func:`is_fetchable` and the ``notes``
-field on each entry.
+Only the 5 Great Lakes are *fetchable* via GLSEA; ocean-basin regions
+fetch via OISST v2.1 / MUR v4.1 (SST) and any region can fetch the ERA5
+atmosphere variables (``wind``/``msl``/``t2m``/``tp``) — see
+:func:`is_fetchable` and the ``notes`` field on each entry.
 """
 
 from __future__ import annotations

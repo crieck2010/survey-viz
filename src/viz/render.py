@@ -57,6 +57,20 @@ _VARIABLE_UNITS = {
     "sst": "°C",
     "currents": "m/s",
     "chlorophyll": "mg/m³",
+    # ERA5 variables (survey-currents v0.4.0+, source "era5").
+    "wind": "m/s",
+    "msl": "hPa",
+    "t2m": "°C",
+    "tp": "mm",
+}
+
+#: Contour defaults per overlay variable: contour every ``step`` units,
+#: labelled in ``unit``.
+_OVERLAY_DEFAULTS = {
+    "wind": {"step": 5.0, "unit": "m/s"},
+    "msl": {"step": 4.0, "unit": "hPa"},   # isobars
+    "t2m": {"step": 2.0, "unit": "°C"},
+    "tp": {"step": 5.0, "unit": "mm"},
 }
 
 
@@ -143,6 +157,38 @@ def _normalize_field(field: Any) -> Tuple[List[_dt.date], Any, Any, Any]:
             f"field grid shape {values.shape} inconsistent with {len(times)} times"
         )
     return times, lats, lons, values
+
+
+def _overlay_grids(field: Any, overlays: Tuple[str, ...],
+                   n_times: int) -> Dict[str, Any]:
+    """Return {overlay_name: (nt,ny,nx) array} for the requested overlays.
+
+    Reads ``field.overlay_grids`` (an ``Era5Field``-shaped dict attribute)
+    or the ``"overlay_grids"`` key of a dict field. Raises ``ValueError``
+    when the spec requests an overlay the field cannot provide — the
+    caller never silently drops a requested overlay.
+    """
+    _, _, np = _require_plotting()
+    if not overlays:
+        return {}
+    if isinstance(field, dict):
+        src = field.get("overlay_grids") or {}
+    else:
+        src = getattr(field, "overlay_grids", None) or {}
+    out: Dict[str, Any] = {}
+    for name in overlays:
+        arr = src.get(name)
+        if arr is None:
+            raise ValueError(
+                f"spec requests overlay {name!r} but the field provides no "
+                f"matching grid (field.overlay_grids keys: {sorted(src)})")
+        arr = np.asarray(arr, dtype=float)
+        if arr.ndim != 3 or arr.shape[0] != n_times:
+            raise ValueError(
+                f"overlay {name!r} grid shape {arr.shape} inconsistent with "
+                f"{n_times} frame times")
+        out[name] = arr
+    return out
 
 
 def _normalize_series(series: Any) -> Optional[Tuple[List[_dt.date], Any]]:
@@ -239,6 +285,7 @@ def render_viz(
     times, lats, lons, values = _normalize_field(field)
     series_norm = _normalize_series(series)
     frame_idx = _bucket_indices(times, spec.cadence)
+    overlay_arrays = _overlay_grids(field, tuple(getattr(spec, "overlays", ())), len(times))
 
     # Fixed color scale: from the spec when given, else the full data range once.
     vmin = spec.vmin if spec.vmin is not None else float(np.nanmin(values))
@@ -317,6 +364,27 @@ def render_viz(
             color="white",
             bbox=dict(boxstyle="round,pad=0.4", fc="black", ec="none", alpha=0.55),
         )
+        # Contour overlays (e.g. isobars over a wind map): levels recomputed
+        # per frame from that frame's data range so contours always fit.
+        for ov_name, ov_arr in overlay_arrays.items():
+            cfg = _OVERLAY_DEFAULTS.get(ov_name, {"step": 1.0, "unit": ""})
+            step = cfg["step"]
+            ov_grid = ov_arr[i]
+            if np.all(np.isnan(ov_grid)):
+                continue
+            lo = float(np.nanmin(ov_grid))
+            hi = float(np.nanmax(ov_grid))
+            levels = np.arange(np.floor(lo / step) * step,
+                               np.ceil(hi / step) * step + step / 2,
+                               step)
+            if len(levels) < 2:
+                continue
+            cs = ax_m.contour(
+                lons, lats, ov_grid, levels=levels,
+                colors="white", linewidths=1.4, alpha=0.85,
+            )
+            ax_m.clabel(cs, fmt=f"%g {cfg['unit']}".strip(),
+                        fontsize=12, colors="white")
 
         # Time-series panel -------------------------------------------------
         ax_s = fig.add_axes([0.08, 0.08, 0.84, 0.24])
@@ -362,10 +430,14 @@ def render_viz(
         ax_f = fig.add_axes([0.0, 0.0, 1.0, 0.06])
         ax_f.axis("off")
         ax_f.set_facecolor(st["face"])
+        footer_var = spec.variable
+        ov = list(getattr(spec, "overlays", ()))
+        if ov:
+            footer_var += " + " + " + ".join(f"{o} contours" for o in ov)
         ax_f.text(
             0.5,
             0.5,
-            f"{spec.variable} · {spec.start.isoformat()} → {spec.end.isoformat()}",
+            f"{footer_var} · {spec.start.isoformat()} → {spec.end.isoformat()}",
             ha="center",
             va="center",
             fontsize=16,

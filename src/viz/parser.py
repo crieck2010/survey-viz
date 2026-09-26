@@ -53,18 +53,59 @@ _VARIABLE_PATTERNS = {
         r"warmth",
         r"\bwarm\b",
         r"\bcold\b",
-        r"\bheat\b",
         r"degrees?",
         r"celsius",
         r"°c",
         r"deg\s*c",
     ],
+    # --- ERA5 variables (survey-currents v0.4.0+, source "era5") ---
+    "wind": [
+        r"\bwinds?\b",
+        r"\bwindy\b",
+        r"\bgales?\b",
+        r"\bgusts?\b",
+    ],
+    "msl": [
+        r"\bpressures?\b",
+        r"\bisobars?\b",
+        r"sea[\s-]?level pressures?",
+    ],
+    "t2m": [
+        r"\bair\s+temperatures?\b",
+        r"\batmospheric\s+temperatures?\b",
+        r"\bheat\s*waves?\b",
+        # Bare "heat" means air heat (ERA5 2-m temperature), not water
+        # temperature — the documented disambiguation rule (v0.3.0).
+        # "warm"/"warmth"/"cold"/"thermal" stay SST (backward compatible).
+        r"\bheat\b",
+    ],
+    "tp": [
+        r"\brain\b",
+        r"\brainfall\b",
+        r"\bprecipitation\b",
+        r"\bdeluges?\b",
+        r"\bdownpours?\b",
+    ],
 }
+
+# Storm keywords: they name the ("wind", overlays=["msl"]) combination
+# (wind base map + pressure isobars), and race in the same earliest-wins
+# contest as the variable groups above.
+_STORM_PATTERNS = [
+    r"\bstorms?\b",
+    r"\bcyclones?\b",
+    r"\bhurricanes?\b",
+    r"\btyphoons?\b",
+]
 
 _VARIABLE_LABELS = {
     "sst": "Surface Water Temperature",
     "currents": "Surface Currents",
     "chlorophyll": "Chlorophyll-a",
+    "wind": "10-m Wind",
+    "msl": "Sea-Level Pressure",
+    "t2m": "2-m Air Temperature",
+    "tp": "Precipitation",
 }
 
 # --- time phrases ------------------------------------------------------------
@@ -165,19 +206,29 @@ def _parse_time(text: str, today: _dt.date) -> Tuple[Optional[_dt.date], Optiona
     return start, end, matched
 
 
-def _parse_variable(text: str) -> Tuple[str, bool]:
-    """Return (variable, defaulted). Earliest keyword in the text wins."""
+def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool]:
+    """Return (variable, overlays, defaulted).
+
+    Earliest keyword in the text wins; storm keywords ("storm",
+    "cyclone", "hurricane", "typhoon") compete in the same race and
+    map to the ("wind", overlays=("msl",)) combination. No keyword ->
+    ("sst", (), True).
+    """
     lowered = text.lower()
-    best: Optional[Tuple[int, str]] = None
+    best: Optional[Tuple[int, str, Tuple[str, ...]]] = None
     for variable, patterns in _VARIABLE_PATTERNS.items():
         for pattern in patterns:
             m = re.search(pattern, lowered)
             if m and (best is None or m.start() < best[0]):
-                best = (m.start(), variable)
+                best = (m.start(), variable, ())
+    for pattern in _STORM_PATTERNS:
+        m = re.search(pattern, lowered)
+        if m and (best is None or m.start() < best[0]):
+            best = (m.start(), "wind", ("msl",))
     if best is None:
         # Documented default rule: no variable keyword -> sst.
-        return "sst", True
-    return best[1], False
+        return "sst", (), True
+    return best[1], best[2], False
 
 
 # --- source-quality keywords ---------------------------------------------------
@@ -271,7 +322,7 @@ def parse_description(
     normalized = " ".join(text.split())
 
     region = find_region(normalized)
-    variable, variable_defaulted = _parse_variable(normalized)
+    variable, overlays, variable_defaulted = _parse_variable(normalized)
     start, end, time_phrases = _parse_time(normalized, today)
 
     if region is None:
@@ -297,4 +348,5 @@ def parse_description(
         layout="reel-vertical",
         style="reel-dark",
         source=_parse_source(normalized, variable),
+        overlays=overlays,
     )

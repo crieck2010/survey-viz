@@ -13,14 +13,20 @@ import datetime as _dt
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-KNOWN_VARIABLES = ("sst", "currents", "chlorophyll")
+KNOWN_VARIABLES = ("sst", "currents", "chlorophyll",
+                   "wind", "msl", "t2m", "tp")
 KNOWN_CADENCES = ("daily", "monthly", "yearly")
 KNOWN_LAYOUTS = ("reel-vertical",)
 KNOWN_STYLES = ("reel-dark", "light")
-#: SST fetch adapters (see :mod:`viz.sources`). "" means "not pinned —
+#: Fetch adapters (see :mod:`viz.sources`). "" means "not pinned —
 #: resolve the regional default at fetch time" (v0.1.0 specs have no
 #: source and keep working unchanged).
-KNOWN_SOURCES = ("glsea", "oisst", "mur")
+KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5")
+#: Variables that may appear in ``VizSpec.overlays`` (drawn as contour
+#: overlays over the base variable, e.g. isobars over a wind map).
+KNOWN_OVERLAYS = ("wind", "msl", "t2m", "tp")
+#: Hard cap: at most this many overlays on one spec (v0.3.0 supports one).
+MAX_OVERLAYS = 1
 
 
 def _coerce_date(value: Any, field: str) -> _dt.date:
@@ -72,11 +78,16 @@ class VizSpec:
             from the full data range once, so the colormap never flickers
             between frames.
         source: SST fetch adapter pin — ``""`` (default, not pinned),
-            ``"glsea"``, ``"oisst"``, or ``"mur"``. Empty means
+            ``"glsea"``, ``"oisst"``, ``"mur"``, or ``"era5"``. Empty means
             :func:`viz.sources.resolve_source` picks the regional default
-            at fetch time (Great Lakes SST -> GLSEA, other SST -> OISST).
-            The deterministic parser sets ``"mur"`` when the description
-            asks for high resolution / ultra / coastal detail.
+            at fetch time (Great Lakes SST -> GLSEA, other SST -> OISST,
+            wind/msl/t2m/tp -> ERA5). The deterministic parser sets
+            ``"mur"`` when the description asks for high resolution /
+            ultra / coastal detail (SST only).
+        overlays: optional contour overlays drawn over the base variable
+            map, e.g. ``("msl",)`` for isobars over a wind field (the
+            "storm" combination). Max ``MAX_OVERLAYS`` entries, each in
+            ``KNOWN_OVERLAYS`` and different from ``variable``.
     """
 
     title: str
@@ -91,6 +102,7 @@ class VizSpec:
     vmin: Optional[float] = None
     vmax: Optional[float] = None
     source: str = ""
+    overlays: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not self.title.strip():
@@ -130,6 +142,20 @@ class VizSpec:
             raise ValueError(
                 f"VizSpec.source: {self.source!r} not in {KNOWN_SOURCES} "
                 "(or empty for the regional default)")
+        overlays = tuple(str(o).strip().lower() for o in self.overlays or ())
+        for ov in overlays:
+            if ov not in KNOWN_OVERLAYS:
+                raise ValueError(
+                    f"VizSpec.overlays: {ov!r} not in {KNOWN_OVERLAYS}")
+            if ov == self.variable:
+                raise ValueError(
+                    f"VizSpec.overlays: {ov!r} duplicates the base variable")
+        if len(overlays) > MAX_OVERLAYS:
+            raise ValueError(
+                f"VizSpec.overlays: at most {MAX_OVERLAYS} overlay(s), "
+                f"got {len(overlays)}")
+        # Canonicalize (tuple of str) so == / to_dict are stable.
+        self.overlays = overlays
 
     def to_dict(self) -> Dict[str, Any]:
         """JSON-serializable dict."""
@@ -146,11 +172,15 @@ class VizSpec:
             "vmin": self.vmin,
             "vmax": self.vmax,
             "source": self.source,
+            "overlays": list(self.overlays),
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "VizSpec":
-        """Rebuild from :meth:`to_dict` output (dates may be ISO strings)."""
+        """Rebuild from :meth:`to_dict` output (dates may be ISO strings).
+
+        v0.2.0 dicts without ``"overlays"`` load unchanged (default ``()``).
+        """
         if not isinstance(data, dict):
             raise TypeError(f"VizSpec.from_dict: expected dict, got {type(data).__name__}")
         kwargs = dict(data)

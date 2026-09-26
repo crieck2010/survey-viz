@@ -64,16 +64,22 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
 ## Parser rules (summary)
 
 - **Region**: gazetteer display names/aliases, case-insensitive, longest match wins.
-  33 regions: the 5 Great Lakes + 20 coastal regions/bays/seas + 8 ocean
+  34 regions: the 5 Great Lakes + 21 coastal regions/bays/seas + 8 ocean
   basins (`data/regions.yaml`).
 - **Variable**: `temperature/sst/thermal/warmth/cold` → `sst`;
   `current/flow/stream/velocity` → `currents`; `chlorophyll/chl/algae/bloom` →
-  `chlorophyll`. Earliest keyword in the text wins; **no keyword → `sst`**.
+  `chlorophyll`; **wind(s)/windy/gale(s)** → `wind`; **pressure/isobar(s)** →
+  `msl`; **air temperature/heatwave/heat** → `t2m`;
+  **rain/rainfall/precipitation/deluge** → `tp`. Earliest keyword in the
+  text wins; **no keyword → `sst`**. **Storms** (`storm/cyclone/hurricane/
+  typhoon`) → `wind` + pressure-isobar overlay.
 - **Source pinning** (new in v0.2.0): `high resolution` / `ultra` /
   `coastal detail` / `1 km` + SST → `source="mur"` (NASA JPL MUR v4.1,
   ~1 km). Otherwise `source` stays empty and
   `viz.sources.resolve_source` picks the regional default: Great Lakes
-  SST → `glsea`, other SST → `oisst`.
+  SST → `glsea`, other SST → `oisst`, `wind`/`msl`/`t2m`/`tp` anywhere →
+  `era5` (Copernicus ERA5 reanalysis, needs a free CDS account —
+  `survey-currents` v0.4.0+).
 - **Time**: `past N years`, `last N years`, `past N months`, `last summer`
   (most recent fully-completed Jun–Aug), `this year`, `2015 to 2020` /
   `2015-2020`, `since 2018`. **No time phrase → past 1 year.**
@@ -84,14 +90,16 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
 
 ## Honest limitations
 
-- **Fetchable for SST**: the 5 Great Lakes via GLSEA, everything else
-  via OISST (default) or MUR (high-resolution requests) — all through
-  `survey-currents` (v0.3.0+). `currents` and `chlorophyll` variables
-  still have no fetch adapter: fetching them raises a clear "no adapter
-  yet" error. See `viz.sources.resolve_source()` and the `notes` field
-  in `data/regions.yaml`.
+- **Fetchable**: the 5 Great Lakes via GLSEA; other SST via OISST (default)
+  or MUR (high-resolution requests); `wind`/`msl`/`t2m`/`tp` via ERA5 in
+  any region (needs a free CDS account) — all through `survey-currents`
+  (v0.4.0+ for ERA5). `currents` and `chlorophyll` still have no fetch
+  adapter: fetching them raises a clear "no adapter yet" error. See
+  `viz.sources.resolve_source()` and the `notes` field in
+  `data/regions.yaml`.
 - The map panel is a plain `pcolormesh` over the region bbox — no coastlines
-  (no cartopy dependency, fully offline).
+  (no cartopy dependency, fully offline). Overlay contours (e.g. isobars)
+  are matplotlib contour lines drawn over the same panel.
 - Research/offline tool: synthetic demo data is clearly synthetic.
 
 ## Docs
