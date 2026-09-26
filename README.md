@@ -64,10 +64,16 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
 ## Parser rules (summary)
 
 - **Region**: gazetteer display names/aliases, case-insensitive, longest match wins.
-  25 regions: the 5 Great Lakes + 20 coastal regions/bays/seas (`data/regions.yaml`).
+  33 regions: the 5 Great Lakes + 20 coastal regions/bays/seas + 8 ocean
+  basins (`data/regions.yaml`).
 - **Variable**: `temperature/sst/thermal/warmth/cold` → `sst`;
   `current/flow/stream/velocity` → `currents`; `chlorophyll/chl/algae/bloom` →
   `chlorophyll`. Earliest keyword in the text wins; **no keyword → `sst`**.
+- **Source pinning** (new in v0.2.0): `high resolution` / `ultra` /
+  `coastal detail` / `1 km` + SST → `source="mur"` (NASA JPL MUR v4.1,
+  ~1 km). Otherwise `source` stays empty and
+  `viz.sources.resolve_source` picks the regional default: Great Lakes
+  SST → `glsea`, other SST → `oisst`.
 - **Time**: `past N years`, `last N years`, `past N months`, `last summer`
   (most recent fully-completed Jun–Aug), `this year`, `2015 to 2020` /
   `2015-2020`, `since 2018`. **No time phrase → past 1 year.**
@@ -78,10 +84,12 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
 
 ## Honest limitations
 
-- **Only the 5 Great Lakes are fetchable today**, via the GLSEA adapter in
-  `survey-currents` (v0.2.0+). The other 20 regions parse fine, but fetching
-  data for them raises a clear "no adapter yet" error. See
-  `viz.gazetteer.is_fetchable()` and the `notes` field in `data/regions.yaml`.
+- **Fetchable for SST**: the 5 Great Lakes via GLSEA, everything else
+  via OISST (default) or MUR (high-resolution requests) — all through
+  `survey-currents` (v0.3.0+). `currents` and `chlorophyll` variables
+  still have no fetch adapter: fetching them raises a clear "no adapter
+  yet" error. See `viz.sources.resolve_source()` and the `notes` field
+  in `data/regions.yaml`.
 - The map panel is a plain `pcolormesh` over the region bbox — no coastlines
   (no cartopy dependency, fully offline).
 - Research/offline tool: synthetic demo data is clearly synthetic.

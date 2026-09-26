@@ -16,7 +16,7 @@ def test_regions_yaml_resolves():
 
 def test_region_count():
     regions = load_regions()
-    assert len(regions) == 25  # 5 Great Lakes + 20 coastal
+    assert len(regions) == 33  # 5 Great Lakes + 20 coastal + 8 ocean basins
 
 
 def test_keys_unique():

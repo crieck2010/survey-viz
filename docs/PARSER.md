@@ -89,7 +89,26 @@ The parser always emits `cadence="monthly"`, `layout="reel-vertical"`,
 `style="reel-dark"`. (Finer control belongs to the spec/CLI layer, not to
 free text.)
 
-## 6. Failure mode
+## 6. Source pinning (SST quality keywords)
+
+`VizSpec.source` is pinned to `"mur"` when the description asks for high
+resolution — keywords `high resolution` / `high-resolution`, `ultra`,
+`coastal detail`, `1 km`, `kilometre`/`kilometer` — **and** the variable
+is SST. Anything else leaves `source` empty (`""`), so
+`viz.sources.resolve_source` applies the regional default at fetch time:
+SST over the 5 Great Lakes → `glsea`, SST anywhere else → `oisst`.
+Non-SST variables never pin a source (MUR is SST-only).
+
+Examples:
+
+- "High resolution North Atlantic sea surface temperature over the past
+  2 years" → `source="mur"` (NASA JPL MUR v4.1, ~1 km)
+- "North Atlantic sea surface temperature over the past 2 years" →
+  `source=""` → resolves to `oisst` (NOAA OISST v2.1, 0.25°)
+- "Lake Superior surface temperature over the past 5 years" →
+  `source=""` → resolves to `glsea` (NOAA GLSEA)
+
+## 7. Failure mode
 
 `UnparseableDescription` messages contain:
 

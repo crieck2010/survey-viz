@@ -30,22 +30,28 @@ The **series** (time-series panel) is likewise duck-typed: an object with
 dict, or `None` — `None` still renders, with a placeholder note in the chart
 panel.
 
-Fetchability today: only the 5 Great Lakes (`lake-superior`, `lake-michigan`,
-`lake-huron`, `lake-erie`, `lake-ontario`) have a fetch adapter, via
-survey-currents' GLSEA adapter. The other 20 gazetteer regions parse fine
-but fetching raises a clear "no adapter yet" error — check
-`viz.gazetteer.is_fetchable(key)` before fetching.
+Fetchability: SST is fetchable everywhere the gazetteer names. Use
+`viz.sources.resolve_source(spec)` — it returns `"glsea"` for SST over
+the 5 Great Lakes, `"oisst"` for SST anywhere else, `"mur"` when the
+spec pins high resolution, and `""` when no adapter exists (non-SST
+variables still raise the honest "no adapter yet" refusal). Then
+`viz.sources.fetch_for_source(source)` lazily imports the matching
+survey-currents callable (`fetch_glsea_sst` / `fetch_oisst` /
+`fetch_mur`) — survey-viz itself never imports survey-currents.
+(`viz.gazetteer.is_fetchable(key)` remains as the region-key-only
+check, kept for backward compatibility.)
 
 Typical glue (in the caller, not in survey-viz):
 
 ```python
-from viz import parse_description, render_viz
-# from survey_currents import fetch_glsea   # caller's import, not ours
+from viz import parse_description, render_viz, resolve_source, fetch_for_source
+# survey-currents is imported lazily by fetch_for_source, not by survey-viz
 
-spec = parse_description("Lake Superior surface temperature over the past 5 years")
-field = fetch_glsea(spec)          # duck-typed field object
-series = field.daily_means()       # duck-typed series (or None)
-frames, manifest = render_viz(spec, field, series, out_dir="frames")
+spec = parse_description("North Atlantic sea surface temperature over the past 5 years")
+source = resolve_source(spec)          # "oisst"
+fetch = fetch_for_source(source)       # currents.sst_global.fetch_oisst
+field = fetch(spec.bbox, spec.start, spec.end, stride_days=30)
+frames, manifest = render_viz(spec, field, None, out_dir="frames")
 ```
 
 ## survey-viz → survey-animate (frames out)

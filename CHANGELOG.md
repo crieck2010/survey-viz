@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-26
+
+### Added
+- `VizSpec.source`: backward-compatible new field (`""` default = not
+  pinned, `"glsea"` / `"oisst"` / `"mur"`). v0.1.0 spec dicts (no
+  `source` key) still deserialize unchanged.
+- `viz.sources` (`src/viz/sources.py`): source routing —
+  `resolve_source(spec)` (explicit pin wins, else regional default:
+  Great-Lakes SST → `glsea`, other SST → `oisst`, non-SST → `""`),
+  `fetch_for_source(source)` (lazy survey-currents import, actionable
+  `ImportError` when the peer is missing/too old), `is_fetchable(spec)`
+  (spec-aware), `default_source()`, `SOURCE_LABELS`. Peers stay
+  optional; survey-viz never imports survey-currents itself.
+- Parser pins `source="mur"` on SST quality keywords (`high
+  resolution`, `ultra`, `coastal detail`, `1 km`, kilometre/kilometer);
+  ignored for non-SST variables.
+- 8 new ocean-basin gazetteer regions: `global`, `north-atlantic`,
+  `south-atlantic`, `north-pacific`, `south-pacific`, `indian-ocean`,
+  `southern-ocean`, `arctic-ocean` (+ `caribbean`/`mediterranean`
+  aliases already existed). Gazetteer now 33 regions; SST is fetchable
+  in all of them via survey-currents v0.3.0 (OISST default, MUR on
+  request).
+- 34 new tests: routing, parser keywords, backward-compatible
+  serialization, ocean-region parsing, lazy peer import.
+
 ## [0.1.0] - 2026-09-26
 
 ### Added

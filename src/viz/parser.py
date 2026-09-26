@@ -180,6 +180,31 @@ def _parse_variable(text: str) -> Tuple[str, bool]:
     return best[1], False
 
 
+# --- source-quality keywords ---------------------------------------------------
+# SST-only: asking for high resolution / ultra / coastal detail pins
+# VizSpec.source = "mur" (NASA JPL MUR v4.1, ~1 km). Anything else leaves
+# source empty so viz.sources.resolve_source applies the regional default
+# (Great Lakes -> GLSEA, other SST -> OISST). Documented in docs/PARSER.md.
+_SOURCE_QUALITY_PATTERNS = [
+    r"high[ -]?resolution",
+    r"\bultra\b",
+    r"coastal detail",
+    r"\b1\s?km\b",
+    r"kilometre",
+    r"kilometer",
+]
+
+
+def _parse_source(text: str, variable: str) -> str:
+    """Return the pinned source (``"mur"``) or ``""`` for the default."""
+    if variable != "sst":
+        return ""
+    lowered = text.lower()
+    if any(re.search(p, lowered) for p in _SOURCE_QUALITY_PATTERNS):
+        return "mur"
+    return ""
+
+
 def _derive_title(region_name: str, variable: str, start: _dt.date, end: _dt.date) -> str:
     label = _VARIABLE_LABELS.get(variable, variable)
     if start.year == end.year:
@@ -271,4 +296,5 @@ def parse_description(
         cadence="monthly",
         layout="reel-vertical",
         style="reel-dark",
+        source=_parse_source(normalized, variable),
     )

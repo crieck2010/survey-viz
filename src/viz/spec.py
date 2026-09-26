@@ -17,6 +17,10 @@ KNOWN_VARIABLES = ("sst", "currents", "chlorophyll")
 KNOWN_CADENCES = ("daily", "monthly", "yearly")
 KNOWN_LAYOUTS = ("reel-vertical",)
 KNOWN_STYLES = ("reel-dark", "light")
+#: SST fetch adapters (see :mod:`viz.sources`). "" means "not pinned —
+#: resolve the regional default at fetch time" (v0.1.0 specs have no
+#: source and keep working unchanged).
+KNOWN_SOURCES = ("glsea", "oisst", "mur")
 
 
 def _coerce_date(value: Any, field: str) -> _dt.date:
@@ -67,6 +71,12 @@ class VizSpec:
         vmin/vmax: fixed colormap scale. If None, the renderer computes them
             from the full data range once, so the colormap never flickers
             between frames.
+        source: SST fetch adapter pin — ``""`` (default, not pinned),
+            ``"glsea"``, ``"oisst"``, or ``"mur"``. Empty means
+            :func:`viz.sources.resolve_source` picks the regional default
+            at fetch time (Great Lakes SST -> GLSEA, other SST -> OISST).
+            The deterministic parser sets ``"mur"`` when the description
+            asks for high resolution / ultra / coastal detail.
     """
 
     title: str
@@ -80,6 +90,7 @@ class VizSpec:
     style: str = "reel-dark"
     vmin: Optional[float] = None
     vmax: Optional[float] = None
+    source: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not self.title.strip():
@@ -111,6 +122,14 @@ class VizSpec:
             raise ValueError(
                 f"VizSpec: vmin ({self.vmin}) must be < vmax ({self.vmax})"
             )
+        if not isinstance(self.source, str):
+            raise TypeError(
+                f"VizSpec.source: expected str, got {type(self.source).__name__}")
+        self.source = self.source.strip().lower()
+        if self.source and self.source not in KNOWN_SOURCES:
+            raise ValueError(
+                f"VizSpec.source: {self.source!r} not in {KNOWN_SOURCES} "
+                "(or empty for the regional default)")
 
     def to_dict(self) -> Dict[str, Any]:
         """JSON-serializable dict."""
@@ -126,6 +145,7 @@ class VizSpec:
             "style": self.style,
             "vmin": self.vmin,
             "vmax": self.vmax,
+            "source": self.source,
         }
 
     @classmethod
