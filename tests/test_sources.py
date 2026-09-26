@@ -76,9 +76,27 @@ def test_is_fetchable_spec_aware():
 
 
 def test_fetch_for_source_lazy_imports():
+    currents = pytest.importorskip(
+        "currents", reason="optional survey-currents peer not installed")
     assert callable(fetch_for_source("oisst"))
     assert callable(fetch_for_source("mur"))
     assert callable(fetch_for_source("glsea"))
+    assert currents.__version__ >= "0.3.0"
+
+
+def test_fetch_for_source_missing_peer_is_actionable(monkeypatch):
+    import importlib
+
+    real_import_module = importlib.import_module
+
+    def fake_import_module(name, *args, **kwargs):
+        if name.startswith("currents"):
+            raise ImportError("No module named 'currents' (simulated)")
+        return real_import_module(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
+    with pytest.raises(ImportError, match="pip install"):
+        fetch_for_source("oisst")
 
 
 def test_fetch_for_source_unknown_raises():
