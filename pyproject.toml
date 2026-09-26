@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "survey-viz"
+version = "0.1.0"
+description = "Plain-English descriptions to vertical map frame sequences: deterministic parser, spec, and offline renderer."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Charles Rieck" }]
+keywords = ["visualization", "maps", "social-media", "reels", "geospatial"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = ["pyyaml"]
+
+[project.optional-dependencies]
+render = ["numpy", "matplotlib"]
+test = ["pytest"]
+
+[project.scripts]
+viz = "viz.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/crieck2010/survey-viz"
+Repository = "https://github.com/crieck2010/survey-viz"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+viz = ["data/regions.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

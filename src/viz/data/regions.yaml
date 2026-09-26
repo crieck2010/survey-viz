@@ -1,0 +1,142 @@
+# Built-in named-region gazetteer for survey-viz.
+#
+# Each entry:
+#   key      - stable slug used as VizSpec.region_key
+#   name     - display name
+#   aliases  - extra phrases the parser matches (case-insensitive, longest match wins)
+#   bbox     - [lon_min, lat_min, lon_max, lat_max] in decimal degrees (WGS84)
+#   notes    - data-availability note (honest: only the 5 Great Lakes are fetchable today,
+#              via the GLSEA adapter in survey-currents v0.2.0; every other region parses
+#              fine but fetching raises a clear "no adapter yet" error)
+#
+# Bboxes are intentionally generous (framing, not bathymetry).
+
+regions:
+  # ---- Great Lakes (fetchable today) ----
+  - key: lake-superior
+    name: Lake Superior
+    aliases: [superior, gitche gumee]
+    bbox: [-92.5, 46.0, -84.5, 48.8]
+    notes: Fetchable today via the GLSEA adapter in survey-currents (v0.2.0+).
+  - key: lake-michigan
+    name: Lake Michigan
+    aliases: [michigan]
+    bbox: [-88.2, 41.5, -85.8, 46.2]
+    notes: Fetchable today via the GLSEA adapter in survey-currents (v0.2.0+).
+  - key: lake-huron
+    name: Lake Huron
+    aliases: [huron]
+    bbox: [-84.8, 43.5, -79.5, 46.5]
+    notes: Fetchable today via the GLSEA adapter in survey-currents (v0.2.0+).
+  - key: lake-erie
+    name: Lake Erie
+    aliases: [erie]
+    bbox: [-83.5, 41.2, -78.8, 43.0]
+    notes: Fetchable today via the GLSEA adapter in survey-currents (v0.2.0+).
+  - key: lake-ontario
+    name: Lake Ontario
+    aliases: [ontario]
+    bbox: [-80.2, 43.0, -76.0, 44.2]
+    notes: Fetchable today via the GLSEA adapter in survey-currents (v0.2.0+).
+
+  # ---- Coastal regions, bays, seas (parse fine; no fetch adapter yet) ----
+  - key: gulf-of-mexico
+    name: Gulf of Mexico
+    aliases: [gulf coast]
+    bbox: [-98.0, 18.0, -80.0, 31.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: chesapeake-bay
+    name: Chesapeake Bay
+    aliases: [chesapeake]
+    bbox: [-77.2, 36.8, -75.2, 39.8]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: puget-sound
+    name: Puget Sound
+    aliases: [puget]
+    bbox: [-123.5, 47.0, -122.0, 48.8]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: gulf-of-maine
+    name: Gulf of Maine
+    aliases: []
+    bbox: [-71.0, 41.5, -66.0, 45.5]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: southern-california-bight
+    name: Southern California Bight
+    aliases: [california bight, socal bight]
+    bbox: [-121.5, 32.0, -117.0, 35.5]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: caribbean-sea
+    name: Caribbean Sea
+    aliases: [caribbean]
+    bbox: [-87.0, 9.0, -59.0, 23.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: mediterranean-sea
+    name: Mediterranean Sea
+    aliases: [mediterranean, med sea]
+    bbox: [-6.0, 30.0, 36.5, 46.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: north-sea
+    name: North Sea
+    aliases: []
+    bbox: [-4.0, 51.0, 10.0, 62.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: red-sea
+    name: Red Sea
+    aliases: []
+    bbox: [32.0, 12.0, 44.0, 30.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: south-china-sea
+    name: South China Sea
+    aliases: []
+    bbox: [105.0, 3.0, 122.0, 24.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: hudson-bay
+    name: Hudson Bay
+    aliases: [hudson]
+    bbox: [-95.0, 51.0, -78.0, 64.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: gulf-of-alaska
+    name: Gulf of Alaska
+    aliases: [alaska gulf]
+    bbox: [-158.0, 54.0, -130.0, 62.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: san-francisco-bay
+    name: San Francisco Bay
+    aliases: [sf bay, san francisco]
+    bbox: [-123.2, 37.2, -121.8, 38.3]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: long-island-sound
+    name: Long Island Sound
+    aliases: [long island]
+    bbox: [-73.8, 40.7, -71.8, 41.4]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: delaware-bay
+    name: Delaware Bay
+    aliases: [delaware]
+    bbox: [-75.7, 38.4, -74.6, 39.6]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: gulf-of-st-lawrence
+    name: Gulf of St. Lawrence
+    aliases: [gulf of st lawrence, st lawrence gulf]
+    bbox: [-68.0, 46.5, -57.0, 52.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: sea-of-japan
+    name: Sea of Japan
+    aliases: [japan sea]
+    bbox: [127.0, 33.0, 143.0, 46.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: arabian-sea
+    name: Arabian Sea
+    aliases: [arabian]
+    bbox: [56.0, 8.0, 74.0, 26.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: bay-of-bengal
+    name: Bay of Bengal
+    aliases: [bengal bay]
+    bbox: [80.0, 5.0, 95.0, 22.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
+  - key: gulf-of-california
+    name: Gulf of California
+    aliases: [sea of cortez, cortez sea]
+    bbox: [-115.5, 23.0, -108.5, 32.0]
+    notes: No fetch adapter yet — parses fine, but fetching raises a "no adapter yet" error.
