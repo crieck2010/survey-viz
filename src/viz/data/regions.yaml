@@ -222,3 +222,15 @@ regions:
     aliases: [boreal canada, canadian boreal, boreal forest]
     bbox: [-140.0, 50.0, -55.0, 70.0]
     notes: Active-fire detections fetchable via the FIRMS adapter in survey-currents v0.6.0+ (needs a free FIRMS MAP_KEY).
+
+  # ---- Seismic regions (fetchable for earthquakes via ComCat since v0.14.0) ----
+  - key: japan
+    name: Japan
+    aliases: [japan]
+    bbox: [128.5, 30.0, 146.5, 46.0]
+    notes: Earthquake catalog fetchable via the ComCat adapter in survey-currents v0.15.0+ (keyless USGS FDSN event service; observed events, not a forecast).
+  - key: alaska
+    name: Alaska
+    aliases: [alaska]
+    bbox: [-170.0, 51.0, -129.0, 72.0]
+    notes: Earthquake catalog fetchable via the ComCat adapter in survey-currents v0.15.0+ (keyless USGS FDSN event service; observed events, not a forecast).

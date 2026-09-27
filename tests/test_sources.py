@@ -129,7 +129,7 @@ def test_package_exports():
                  "is_source_fetchable", "KNOWN_SOURCES", "SOURCE_LABELS"):
         assert name in viz.__all__
         assert hasattr(viz, name)
-    assert viz.__version__ == "0.14.0"
+    assert viz.__version__ == "0.14.1"
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +285,7 @@ def test_gulf_stream_region_registered():
     assert r is not None
     assert tuple(r["bbox"]) == (-81.0, 25.0, -55.0, 43.0)
     # 40 regions: 35 from v0.4.0 + 5 fire regions (v0.5.0).
-    assert len(load_regions()) == 40
+    assert len(load_regions()) == 42
 
 
 # --- FIRMS / fire routing (v0.5.0) ----------------------------------------------

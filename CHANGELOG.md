@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-09-27
+
+### Added
+- Gazetteer: `japan` and `alaska` seismic regions
+  (`data/regions.yaml`; earthquake catalog fetchable via the ComCat
+  adapter in survey-currents v0.15.0+), so descriptions like
+  "Earthquakes and topography in Japan" and "Earthquake swarm over
+  time in Alaska" parse end-to-end (previously the regions were
+  unknown and parsing failed).
+
 ## [0.14.0] - 2026-09-27
 
 ### Added
