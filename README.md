@@ -204,6 +204,15 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   and is recorded in `manifest["render"]["underlay"]`, never a crash.
   `VizSpec.underlay` (default `True`) or `render_viz(...,
   underlay=False)` controls it. See [docs/BASEMAPS.md](docs/BASEMAPS.md).
+- **Aesthetics** (new in v0.15.0): `render_viz(..., style=...)` picks
+  `reel-dark` (default) or `light`; `render_viz(..., cmap="inferno")`
+  overrides the data colormap with any registered matplotlib name
+  (`viz.CURATED_CMAPS` lists the 30 recommended ones) — continuous
+  maps only; storm tracks, streamgages, and earthquakes keep their
+  fixed scientific encodings (a `cmap` there is validated but recorded
+  as requested-not-applied). `VizSpec.caption` prepends a custom line
+  to the frame footer without erasing per-renderer honesty wording
+  (e.g. the quake catalog's "observed events — not a forecast").
 - **Time**: `past N years`, `last N years`, `past N months`, `last summer`
   (most recent fully-completed Jun–Aug), `this year`, `2015 to 2020` /
   `2015-2020`, `since 2018`. **No time phrase → past 1 year.**

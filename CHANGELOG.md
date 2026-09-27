@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-09-27
+
+### Added
+- `VizSpec.caption`: optional custom footer caption. It is *prepended*
+  to the frame footer (`"<caption> · <variable/honesty text> ·
+  <start> → <end>"`), so per-renderer honesty wording — e.g. the
+  earthquake catalog's "observed events — not a forecast" — is never
+  erased by a custom caption. Empty/whitespace-only strings normalize
+  to `None`; `to_dict()`/`from_dict()` round-trip it, and pre-0.15.0
+  dicts without the key load with `caption=None`.
+- `render_viz(..., cmap=None)`: optional matplotlib colormap override
+  for the data map. Applies only to continuous data maps (SST, ocean
+  color, ERA5, fires, night lights, topography, water storage, ...);
+  the categorical renderers (storm tracks, streamgages, earthquakes)
+  keep their fixed scientific encodings — a `cmap` passed for those is
+  validated (typos fail fast) but recorded in the manifest as
+  requested-not-applied, never silently recoloring data whose colors
+  carry meaning. Invalid names raise `ValueError` with curated
+  recommendations.
+- `viz.CURATED_CMAPS`: 30 recommended colormap names (all verified
+  registered with matplotlib), exported for UI pickers.
+
+### Changed
+- `viz.__version__` now reads the installed distribution metadata
+  (written from `pyproject.toml` at install time) instead of a
+  hand-edited string, so it can never go stale again.
+- Frame manifests now record `"cmap_requested"` (and
+  `"cmap_overridden"` on the main renderer) alongside the effective
+  `"cmap"`.
+
 ## [0.14.1] - 2026-09-27
 
 ### Added

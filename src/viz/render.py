@@ -156,6 +156,45 @@ _UNDERLAY_COAST_COLOR = {
     "light": "#2f5d8a",
 }
 
+#: Curated matplotlib colormaps for UI dropdowns (e.g. reel-studio's
+#: Aesthetics picker). ``render_viz`` accepts ANY registered matplotlib
+#: colormap as ``cmap`` — this list is just the recommended subset.
+CURATED_CMAPS = (
+    # Perceptually uniform sequential
+    "viridis", "plasma", "inferno", "magma", "cividis",
+    # Sequential
+    "Blues", "Greens", "Oranges", "Purples", "Reds",
+    "YlOrRd", "YlGnBu", "hot", "cool",
+    "spring", "summer", "autumn", "winter",
+    # Diverging
+    "coolwarm", "RdBu_r", "RdYlBu_r", "BrBG", "PiYG", "seismic",
+    # Miscellaneous
+    "turbo", "jet", "nipy_spectral", "terrain", "ocean", "gist_earth",
+)
+
+
+def _validate_cmap(cmap: Optional[str], plt) -> Optional[str]:
+    """Validate a user-supplied colormap name against matplotlib's registry.
+
+    Returns the (stripped) name, or ``None`` when ``cmap`` is ``None``.
+    Raises :class:`ValueError` naming the curated recommendations when the
+    name is not a registered colormap. ``plt`` is the lazily imported
+    matplotlib pyplot module (keeps the engine import-light).
+    """
+    if cmap is None:
+        return None
+    if not isinstance(cmap, str) or not cmap.strip():
+        raise ValueError(
+            f"render_viz: cmap must be a registered matplotlib colormap "
+            f"name or None, got {cmap!r}")
+    name = cmap.strip()
+    if name not in plt.colormaps():
+        raise ValueError(
+            f"render_viz: unknown colormap {name!r}. "
+            f"Recommended: {', '.join(CURATED_CMAPS)} "
+            f"(any other registered matplotlib colormap also works)")
+    return name
+
 #: Contour defaults per overlay variable: contour every ``step`` units,
 #: labelled in ``unit``.
 _OVERLAY_DEFAULTS = {
@@ -408,14 +447,26 @@ def _draw_footer(fig, spec, st, footer_var: str, fontsize: int = 16) -> None:
     whose prescribed wording ("N events · largest M{x} · observed
     events — not a forecast") needs a smaller size to fit the
     1080 px figure width.
+
+    When ``spec.caption`` is set, it is prepended to the footer —
+    ``"<caption> · <footer_var> · <start> → <end>"`` — so per-renderer
+    honesty wording (e.g. the quake catalog's "observed events — not a
+    forecast") is never erased by a custom caption.
     """
     ax_f = fig.add_axes([0.0, 0.0, 1.0, 0.06])
     ax_f.axis("off")
     ax_f.set_facecolor(st["face"])
+    caption = getattr(spec, "caption", None)
+    if caption:
+        footer_text = (f"{caption} · {footer_var} · "
+                       f"{spec.start.isoformat()} → {spec.end.isoformat()}")
+    else:
+        footer_text = (f"{footer_var} · {spec.start.isoformat()} → "
+                       f"{spec.end.isoformat()}")
     ax_f.text(
         0.5,
         0.5,
-        f"{footer_var} · {spec.start.isoformat()} → {spec.end.isoformat()}",
+        footer_text,
         ha="center",
         va="center",
         fontsize=fontsize,
@@ -517,6 +568,7 @@ def render_viz(
     layout: str = "reel-vertical",
     style: Optional[str] = None,
     underlay: Optional[bool] = None,
+    cmap: Optional[str] = None,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -532,6 +584,18 @@ def render_viz(
     when the peer or the data is unavailable the renderer falls back
     to the plain background and records the underlay status in the
     manifest — never a crash, never silent wrongness.
+
+    ``cmap`` overrides the data colormap with any registered matplotlib
+    colormap name (see :data:`CURATED_CMAPS` for the recommended
+    subset). It applies ONLY to continuous data maps (the main map
+    renderer: SST, ocean color, ERA5, fires, night lights, topography,
+    water storage, ...). The categorical renderers — storm tracks
+    (Saffir-Simpson colors), streamgages (WaterWatch percentile
+    classes), earthquakes (hypocentral-depth bins) — keep their fixed
+    scientific encodings; a ``cmap`` passed for those variables is
+    validated (typos still fail fast) but recorded in the manifest as
+    requested-not-applied, never silently recoloring data whose colors
+    carry meaning. ``None`` (default) keeps each variable's default.
     """
     if layout != "reel-vertical":
         raise ValueError(f"Unknown layout: {layout!r} (only 'reel-vertical' in v0.1.0)")
@@ -539,20 +603,22 @@ def render_viz(
     if style not in _STYLE:
         raise ValueError(f"Unknown style: {style!r} (expected one of {sorted(_STYLE)})")
 
+    want_underlay = underlay if underlay is not None else bool(spec.underlay)
+
     if spec.variable == "storm-tracks":
         return _render_storm_tracks(
             spec, field, series, out_dir, layout, style,
-            underlay if underlay is not None else bool(spec.underlay))
+            want_underlay, cmap=cmap)
 
     if spec.variable == "streamflow":
         return _render_gage_field(
             spec, field, series, out_dir, layout, style,
-            underlay if underlay is not None else bool(spec.underlay))
+            want_underlay, cmap=cmap)
 
     if spec.variable == "earthquakes":
         return _render_quake_field(
             spec, field, series, out_dir, layout, style,
-            underlay if underlay is not None else bool(spec.underlay))
+            want_underlay, cmap=cmap)
 
     plt, mdates, np = _require_plotting()
 
@@ -604,7 +670,8 @@ def render_viz(
         norm = None
 
     st = _STYLE[style]
-    var_cmap = _VARIABLE_CMAPS.get(spec.variable, st["cmap"])
+    var_cmap = _validate_cmap(cmap, plt) or _VARIABLE_CMAPS.get(
+        spec.variable, st["cmap"])
     unit = _VARIABLE_UNITS.get(spec.variable, "")
     region = get_region(spec.region_key)
     region_name = region["name"] if region else spec.region_key
@@ -792,6 +859,8 @@ def render_viz(
             "layout": layout,
             "style": style,
             "cmap": var_cmap,
+            "cmap_requested": cmap,
+            "cmap_overridden": cmap is not None,
             "vmin": vmin,
             "vmax": vmax,
             "n_frames": len(frames),
@@ -1064,9 +1133,13 @@ def _storm_runs(track: Dict[str, Any], cutoff: _dt.date) -> List[Tuple[str, list
 
 def _render_storm_tracks(spec, field, series, out_dir: str,
                          layout: str, style: str,
-                         want_underlay: bool) -> Tuple[List[str], str]:
+                         want_underlay: bool,
+                         cmap: Optional[str] = None) -> Tuple[List[str], str]:
     """Render IBTrACS storm tracks: cumulative track frames + manifest."""
     plt, mdates, np = _require_plotting()
+    # Categorical Saffir-Simpson encoding: a user cmap is validated
+    # (typos fail fast) but never applied — recorded in the manifest.
+    _validate_cmap(cmap, plt)
     from matplotlib.lines import Line2D
 
     tracks = _normalize_storm_field(field)
@@ -1275,6 +1348,7 @@ def _render_storm_tracks(spec, field, series, out_dir: str,
             "layout": layout,
             "style": style,
             "cmap": "sshs-categorical",
+            "cmap_requested": cmap,
             "vmin": wind_range[0],
             "vmax": wind_range[1],
             "n_frames": len(frames),
@@ -1482,7 +1556,8 @@ def _draw_tp_overlay(ax_m, ov, frame_date) -> bool:
 
 def _render_gage_field(spec, field, series, out_dir: str,
                        layout: str, style: str,
-                       want_underlay: bool) -> Tuple[List[str], str]:
+                       want_underlay: bool,
+                       cmap: Optional[str] = None) -> Tuple[List[str], str]:
     """Render USGS streamgage daily values: gage markers + hydrograph.
 
     Map panel: one marker per gage at its (lon, lat), colored by the
@@ -1498,6 +1573,10 @@ def _render_gage_field(spec, field, series, out_dir: str,
     manifest status — never fabricated data.
     """
     plt, mdates, np = _require_plotting()
+    # Categorical WaterWatch-percentile encoding: a user cmap is
+    # validated (typos fail fast) but never applied — recorded in the
+    # manifest.
+    _validate_cmap(cmap, plt)
     from matplotlib.lines import Line2D
 
     gages = _normalize_gage_field(field)
@@ -1736,6 +1815,7 @@ def _render_gage_field(spec, field, series, out_dir: str,
             "layout": layout,
             "style": style,
             "cmap": "gage-percentile",
+            "cmap_requested": cmap,
             "vmin": None,
             "vmax": None,
             "n_frames": len(frames),
@@ -1948,7 +2028,8 @@ def _quake_largest(events: List[Dict[str, Any]], n: int = 5
 
 def _render_quake_field(spec, field, series, out_dir: str,
                         layout: str, style: str,
-                        want_underlay: bool) -> Tuple[List[str], str]:
+                        want_underlay: bool,
+                        cmap: Optional[str] = None) -> Tuple[List[str], str]:
     """Render USGS Earthquake Catalog events: cumulative quake frames.
 
     Map panel: one marker per event at its (lon, lat), marker area per
@@ -1966,6 +2047,10 @@ def _render_quake_field(spec, field, series, out_dir: str,
     model).
     """
     plt, mdates, np = _require_plotting()
+    # Categorical hypocentral-depth-bin encoding: a user cmap is
+    # validated (typos fail fast) but never applied — recorded in the
+    # manifest.
+    _validate_cmap(cmap, plt)
     from matplotlib.lines import Line2D
 
     events, n_skipped = _normalize_quake_field(field)
@@ -2194,6 +2279,7 @@ def _render_quake_field(spec, field, series, out_dir: str,
             "layout": layout,
             "style": style,
             "cmap": "quake-magnitude",
+            "cmap_requested": cmap,
             "vmin": None,
             "vmax": None,
             "n_frames": len(frames),

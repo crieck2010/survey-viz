@@ -171,6 +171,9 @@ class VizSpec:
             lifetime max sustained wind — see ``docs/STORMS.md``).
         storm_top_n: how many storms ``storm_rank="strongest"`` keeps
             (``None`` = the parser default, 5).
+        caption: optional custom footer caption, prepended to the frame
+            footer ahead of the variable/honesty text (``None`` = default
+            footer). ``""`` is treated as ``None``.
     """
 
     title: str
@@ -192,6 +195,7 @@ class VizSpec:
     storm_name: str = ""
     storm_rank: str = ""
     storm_top_n: Optional[int] = None
+    caption: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not self.title.strip():
@@ -281,6 +285,12 @@ class VizSpec:
                 raise ValueError(
                     "VizSpec.storm_top_n: expected a positive int, got "
                     f"{self.storm_top_n!r}")
+        if self.caption is not None:
+            if not isinstance(self.caption, str):
+                raise TypeError(
+                    "VizSpec.caption: expected str or None, got "
+                    f"{type(self.caption).__name__}")
+            self.caption = self.caption.strip() or None
 
     def to_dict(self) -> Dict[str, Any]:
         """JSON-serializable dict."""
@@ -304,6 +314,7 @@ class VizSpec:
             "storm_name": self.storm_name,
             "storm_rank": self.storm_rank,
             "storm_top_n": self.storm_top_n,
+            "caption": self.caption,
         }
 
     @classmethod
@@ -317,7 +328,8 @@ class VizSpec:
         ``"storm_top_n"`` (pre-v0.10.0) load with ``""`` / ``""`` /
         ``None``; dicts without ``"context"`` (pre-v0.13.0) load with
         ``()``; ``"variable": "chlorophyll"`` (pre-v0.13.0) loads as
-        the canonical ``"ocean-color"``.
+        the canonical ``"ocean-color"``; dicts without ``"caption"``
+        (pre-v0.15.0) load with ``None`` (default footer).
         """
         if not isinstance(data, dict):
             raise TypeError(f"VizSpec.from_dict: expected dict, got {type(data).__name__}")

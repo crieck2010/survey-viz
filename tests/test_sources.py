@@ -2,6 +2,7 @@
 parser quality-keyword pinning, and the new ocean gazetteer regions."""
 
 import datetime as dt
+from pathlib import Path
 
 import pytest
 
@@ -126,10 +127,17 @@ def test_fetch_for_source_unknown_raises():
 
 def test_package_exports():
     for name in ("resolve_source", "fetch_for_source", "default_source",
-                 "is_source_fetchable", "KNOWN_SOURCES", "SOURCE_LABELS"):
+                 "is_source_fetchable", "KNOWN_SOURCES", "SOURCE_LABELS",
+                 "CURATED_CMAPS"):
         assert name in viz.__all__
         assert hasattr(viz, name)
-    assert viz.__version__ == "0.14.1"
+    # __version__ comes from installed distribution metadata, which is
+    # written from pyproject.toml at install time — compare against the
+    # declared version so this test cannot go stale.
+    import tomllib
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    declared = tomllib.load(open(pyproject, "rb"))["project"]["version"]
+    assert viz.__version__ == declared
 
 
 # ---------------------------------------------------------------------------
