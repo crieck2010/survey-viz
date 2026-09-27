@@ -127,9 +127,18 @@ def test_explain_source_mentions_ibtracs():
     assert "IBTrACS" in text or "best tracks" in text
 
 
-def test_fetch_for_source_ibtracs_names_peer_version():
-    with pytest.raises(ImportError, match="0.11.0"):
-        fetch_for_source("ibtracs")
+def test_fetch_for_source_ibtracs_lazy():
+    # Environment-sensitive by design (like the era5/imerg lazy tests):
+    # when survey-currents>=0.11.0 is importable the adapter must
+    # resolve to the real fetch_ibtracs; when it is not, the ImportError
+    # must name the minimum peer version.
+    try:
+        import currents.storms as st  # noqa: F401
+    except ImportError:
+        with pytest.raises(ImportError, match="0.11.0"):
+            fetch_for_source("ibtracs")
+    else:
+        assert fetch_for_source("ibtracs") is st.fetch_ibtracs
 
 
 # ---------------------------------------------------------------------------
