@@ -221,6 +221,9 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
 ## Docs
 
 - [docs/PARSER.md](docs/PARSER.md) — the full deterministic grammar
+- [docs/STREAMFLOW.md](docs/STREAMFLOW.md) — USGS streamgage rendering:
+  gage markers, discharge-percentile categories, hydrograph rules,
+  empty-field behavior
 - [docs/BASEMAPS.md](docs/BASEMAPS.md) — the GEBCO + Natural Earth
   basemap underlay, GEBCO-as-variable routing, and the
   country-borders refusal
