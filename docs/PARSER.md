@@ -290,6 +290,44 @@ the change-detection reading is the honest one, the same way
   ("no source: 'power-outage' (blackout / power-outage mapping) is
   temporal change detection across two or more epochs …").
 
+### 6c. Storm tracks (IBTrACS) vs storm conditions (ERA5)
+
+`variable="storm-tracks"` always pins `source="ibtracs"`: **NOAA
+IBTrACS v04r01** — global tropical-cyclone best tracks, 1980–present,
+keyless (survey-currents v0.11.0+). Track/identity/ranking intent is
+detected **before** the earliest-wins keyword race, and requires a
+storm word (`storm`, `cyclone`, `hurricane`, `typhoon`):
+
+- **Named storm** — "Hurricane Katrina", "Tropical Storm Milton",
+  "Typhoon Haiyan's". The name candidate must be capitalized (storm
+  names are proper nouns) and must not be a common noun — "season",
+  "track", "conditions", "pressure", "wind", "rain", "surge" are
+  excluded, so "Hurricane pressure drops" and "Hurricane season
+  outlook" keep the ERA5 reading. Stored lowercase in
+  `VizSpec.storm_name` (`""` = all storms).
+- **Track wording** — "track(s)", "path(s)",
+  "trajectory/trajectories" with a storm word.
+- **Ranking wording** — "strongest", "most intense", "most powerful"
+  with a storm word → `VizSpec.storm_rank="strongest"`; "top N"
+  phrasing sets `VizSpec.storm_top_n` (`None` = default 5). Ranked by
+  lifetime maximum sustained wind (kt) — documented, never implicit.
+
+A bare name with no storm word ("Katrina's path") does **not** pin
+the name (no storm-name gazetteer); track wording still routes to
+`storm-tracks` without the pin.
+
+- "Hurricane Katrina's track across the Atlantic" →
+  `variable="storm-tracks"`, `source="ibtracs"`, `storm_name="katrina"`.
+- "Hurricane conditions in the Gulf of Mexico last summer" →
+  `variable="wind"` + `("msl",)` overlay, no source pin — the ambient
+  storm-environment reading (unchanged behavior).
+- "Strongest hurricanes of the 2024 season" →
+  `variable="storm-tracks"`, `source="ibtracs"`, `storm_rank="strongest"`.
+- "Hurricane Milton's track with the wind field" →
+  `variable="storm-tracks"`, `source="ibtracs"`, overlays `("wind",)` —
+  the **IBTrACS+ERA5** combination: tracks from IBTrACS, ambient wind
+  contours from ERA5 (graceful "absent" if unavailable).
+
 Examples:
 
 - "High resolution North Atlantic sea surface temperature over the past

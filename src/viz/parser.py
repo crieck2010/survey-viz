@@ -180,13 +180,64 @@ _VARIABLE_PATTERNS = {
 
 # Storm keywords: they name the ("wind", overlays=["msl"]) combination
 # (wind base map + pressure isobars), and race in the same earliest-wins
-# contest as the variable groups above.
+# contest as the variable groups above — EXCEPT when the description
+# shows track/identity/history/ranking intent (a named storm, "track"
+# wording, or "strongest ..." wording). That intent is detected first
+# by _parse_storm_request and routes to the "storm-tracks" variable
+# (NOAA IBTrACS best tracks) instead — see docs/STORMS.md. Generic
+# "hurricane conditions" wording keeps the ERA5 wind + msl combination.
 _STORM_PATTERNS = [
     r"\bstorms?\b",
     r"\bcyclones?\b",
     r"\bhurricanes?\b",
     r"\btyphoons?\b",
 ]
+
+# Words that can follow a storm keyword positionally but are never storm
+# names ("hurricane season", "Hurricane Track", ...). Checked
+# case-insensitively; the name candidate must ALSO be capitalized (storm
+# names are proper nouns — "Hurricane pressure" and "the hurricane
+# nears" are not names).
+_NON_STORM_NAMES = frozenset({
+    "season", "seasons", "seasonal", "track", "tracks", "path", "paths",
+    "conditions", "condition", "activity", "outlook", "forecast",
+    "forecasts", "watch", "watches", "warning", "warnings", "center",
+    "update", "updates", "preparedness", "awareness", "landfall",
+    "landfalls", "formation", "pressure", "pressures", "wind", "winds",
+    "rain", "rainfall", "surge", "damage",
+})
+
+#: "Hurricane Katrina" / "tropical storm Milton" / "Typhoon Haiyan's".
+#: The storm keyword matches case-insensitively; the name candidate
+#: must start with an uppercase letter (checked in code, since
+#: re.IGNORECASE would make [A-Z] match lowercase too).
+_NAMED_STORM = re.compile(
+    r"\b(?:hurricanes?|tropical\s+storms?|typhoons?|cyclones?|"
+    r"tropical\s+depressions?)\s+([A-Za-z]+)(?:'s)?\b", re.IGNORECASE)
+
+#: Track/identity intent: the description is about the track geometry,
+#: not the ambient storm environment.
+_STORM_TRACK_INTENT = [
+    r"\btracks?\b",
+    r"\bpaths?\b",
+    r"\btrajector(?:y|ies)\b",
+]
+
+#: Ranking intent: "strongest hurricanes of the 2024 season" etc.
+_STORM_RANK_INTENT = [
+    r"\bstrongest\b",
+    r"\bmost\s+intense\b",
+    r"\bmost\s+powerful\b",
+]
+
+#: Optional ERA5 ambient-field context on a storm-tracks request
+#: ("Hurricane Milton's track with the wind field"): the overlay name
+#: is fetched from ERA5 by the pipeline and drawn as contours under
+#: the tracks. At most one (MAX_OVERLAYS == 1).
+_STORM_CONTEXT_PATTERNS = {
+    "wind": [r"\bwind\s*fields?\b", r"\bwith\s+winds?\b"],
+    "msl": [r"\bpressure\s*fields?\b", r"\bwith\s+pressures?\b"],
+}
 
 _VARIABLE_LABELS = {
     "sst": "Surface Water Temperature",
@@ -205,6 +256,7 @@ _VARIABLE_LABELS = {
     "bathymetry": "Bathymetry",
     "elevation": "Elevation",
     "country-borders": "Country Borders",
+    "storm-tracks": "Storm Tracks",
 }
 
 # --- time phrases ------------------------------------------------------------
@@ -305,18 +357,89 @@ def _parse_time(text: str, today: _dt.date) -> Tuple[Optional[_dt.date], Optiona
     return start, end, matched
 
 
-def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool]:
-    """Return (variable, overlays, defaulted).
+def _parse_storm_request(text: str) -> Optional[Tuple[str, str, Optional[int]]]:
+    """Detect storm track/identity/ranking intent.
 
-    Earliest keyword in the text wins; storm keywords ("storm",
-    "cyclone", "hurricane", "typhoon") compete in the same race and
-    map to the ("wind", overlays=("msl",)) combination. Safety rule
-    (v0.8.0): "power-outage" wording anywhere in the text overrides a
-    "night-lights" win — outage mapping is temporal change detection
-    and a single-epoch Black Marble map would be a lie. No keyword ->
-    ("sst", (), True).
+    Returns ``(storm_name, storm_rank, storm_top_n)`` when the
+    description asks for IBTrACS track geometry rather than the ERA5
+    ambient storm environment, else ``None``:
+
+    * a named storm ("Hurricane Katrina", "Tropical Storm Milton") ->
+      ``(name, "", None)`` — the name is the storm identity, so the
+      track reading always wins;
+    * track wording ("track", "tracks", "path", "trajectory") together
+      with a storm word ("storm", "hurricane", "cyclone", "typhoon") ->
+      ``("", "", None)``;
+    * ranking wording ("strongest", "most intense", "most powerful")
+      with a storm word -> ``("", "strongest", top_n)``, where
+      ``top_n`` comes from "top N" phrasing (``None`` = default 5).
+
+    Generic "hurricane conditions" wording matches none of these and
+    falls through to the ordinary earliest-wins race (ERA5 wind +
+    msl). A bare name with no storm word ("Katrina's track") is not
+    detected — the parser has no storm-name gazetteer, so a storm word
+    is required.
     """
     lowered = text.lower()
+    if not any(re.search(p, lowered) for p in _STORM_PATTERNS):
+        return None
+    name = ""
+    m = _NAMED_STORM.search(text)
+    if m:
+        candidate = m.group(1)
+        # Storm names are proper nouns: the candidate must be
+        # capitalized ("Hurricane Katrina" yes; "Hurricane pressure"
+        # and "the hurricane nears" no). An all-lowercase name is not
+        # detected — track wording still routes to "storm-tracks", just
+        # without the name pin (documented in docs/STORMS.md).
+        if (candidate[:1].isupper()
+                and candidate.lower() not in _NON_STORM_NAMES
+                and len(candidate) > 2):
+            name = candidate.lower()
+    track_intent = any(re.search(p, lowered) for p in _STORM_TRACK_INTENT)
+    rank_intent = any(re.search(p, lowered) for p in _STORM_RANK_INTENT)
+    top_n: Optional[int] = None
+    m = re.search(r"\btop\s+(\d+)\b", lowered)
+    if m:
+        top_n = int(m.group(1))
+    if name or track_intent or rank_intent:
+        return name, ("strongest" if rank_intent else ""), top_n
+    return None
+
+
+def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
+                                        str, str, Optional[int]]:
+    """Return (variable, overlays, defaulted, storm_name, storm_rank,
+    storm_top_n).
+
+    Storm track/identity/ranking intent (see :func:`_parse_storm_request`)
+    is detected FIRST: a named storm, track wording, or "strongest ..."
+    wording with a storm word routes to ``"storm-tracks"`` (NOAA IBTrACS
+    best tracks). Otherwise the earliest keyword in the text wins;
+    storm keywords ("storm", "cyclone", "hurricane", "typhoon") compete
+    in the same race and map to the ("wind", overlays=("msl",))
+    combination — so generic "hurricane conditions" wording keeps the
+    ERA5 wind + msl overlay. Safety rule (v0.8.0): "power-outage"
+    wording anywhere in the text overrides a "night-lights" win —
+    outage mapping is temporal change detection and a single-epoch
+    Black Marble map would be a lie. No keyword ->
+    ("sst", (), True, "", "", None).
+
+    On a ``"storm-tracks"`` win, "with the wind field" / "with the
+    pressure field" wording adds the corresponding ERA5 contour overlay
+    (the pipeline fetches it as context; the renderer degrades
+    gracefully when it is absent).
+    """
+    lowered = text.lower()
+    storm_req = _parse_storm_request(text)
+    if storm_req is not None:
+        storm_name, storm_rank, storm_top_n = storm_req
+        overlays: Tuple[str, ...] = ()
+        for ov_name, patterns in _STORM_CONTEXT_PATTERNS.items():
+            if any(re.search(p, lowered) for p in patterns):
+                overlays = (ov_name,)
+                break
+        return "storm-tracks", overlays, False, storm_name, storm_rank, storm_top_n
     best: Optional[Tuple[int, str, Tuple[str, ...]]] = None
     for variable, patterns in _VARIABLE_PATTERNS.items():
         for pattern in patterns:
@@ -329,7 +452,7 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool]:
             best = (m.start(), "wind", ("msl",))
     if best is None:
         # Documented default rule: no variable keyword -> sst.
-        return "sst", (), True
+        return "sst", (), True, "", "", None
     variable = best[1]
     if variable == "night-lights" and any(
             re.search(p, lowered)
@@ -338,8 +461,8 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool]:
         # overrides a night-lights win — outage mapping is temporal
         # change detection, and a single daily Black Marble map would be
         # a lie. Documented in docs/PARSER.md.
-        return "power-outage", (), False
-    return variable, best[2], False
+        return "power-outage", (), False, "", "", None
+    return variable, best[2], False, "", "", None
 
 
 # --- source-quality keywords ---------------------------------------------------
@@ -426,6 +549,9 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
     * ``"bathymetry"`` / ``"elevation"`` always pin ``"gebco"`` (GEBCO
       2024 global topography/bathymetry, 15 arc-second) with an
       inspectable ``source_reason`` — in every region.
+    * ``"storm-tracks"`` always pins ``"ibtracs"`` (NOAA IBTrACS
+      v04r01 tropical-cyclone best tracks) with an inspectable
+      ``source_reason`` — in every region.
 
     The reason is always populated when a source is pinned (used for
     ``VizSpec.source_reason``).
@@ -469,6 +595,10 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
         return ("gebco",
                 f"{variable} description -> "
                 "GEBCO 2024 global topography/bathymetry (15 arc-second)")
+    if variable == "storm-tracks":
+        return ("ibtracs",
+                "storm track/identity request -> "
+                "NOAA IBTrACS v04r01 best tracks")
     return "", ""
 
 
@@ -538,7 +668,8 @@ def parse_description(
     normalized = " ".join(text.split())
 
     region = find_region(normalized)
-    variable, overlays, variable_defaulted = _parse_variable(normalized)
+    (variable, overlays, variable_defaulted,
+     storm_name, storm_rank, storm_top_n) = _parse_variable(normalized)
     start, end, time_phrases = _parse_time(normalized, today)
 
     if region is None:
@@ -558,14 +689,16 @@ def parse_description(
     # for night lights — the Black Marble source is daily). Bathymetry
     # and elevation are static: yearly cadence, and a single frame when
     # no explicit time phrase was given (v0.9.0 — GEBCO is a static
-    # compilation, not a time series).
+    # compilation, not a time series). Storm tracks are fix-level time
+    # series: daily cadence, one frame per day, tracks drawn
+    # cumulatively (v0.10.0).
     if variable in ("bathymetry", "elevation"):
         cadence = "yearly"
         if default_time:
             start = end = today
     else:
-        cadence = "daily" if variable in ("fire", "sea-ice", "night-lights") \
-            else "monthly"
+        cadence = "daily" if variable in ("fire", "sea-ice", "night-lights",
+                                          "storm-tracks") else "monthly"
     source, source_reason = _parse_source(normalized, variable)
     return VizSpec(
         title=spec_title,
@@ -580,4 +713,7 @@ def parse_description(
         source=source,
         source_reason=source_reason,
         overlays=overlays,
+        storm_name=storm_name,
+        storm_rank=storm_rank,
+        storm_top_n=storm_top_n,
     )

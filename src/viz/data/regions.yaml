@@ -155,7 +155,7 @@ regions:
     notes: SST fetchable via OISST (default) or MUR (high-resolution requests) in survey-currents v0.3.0+.
   - key: north-atlantic
     name: North Atlantic Ocean
-    aliases: [north atlantic, north atlantic ocean]
+    aliases: [north atlantic, north atlantic ocean, atlantic, atlantic ocean]
     bbox: [-80.0, 0.0, 20.0, 66.0]
     notes: SST fetchable via OISST (default) or MUR (high-resolution requests) in survey-currents v0.3.0+.
   - key: south-atlantic

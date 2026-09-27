@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-09-27
+
+### Added
+- IBTrACS storm tracks (`KNOWN_VARIABLES += ("storm-tracks",)`,
+  `KNOWN_SOURCES += ("ibtracs",)`):
+  - Track/identity/ranking intent is detected **before** the
+    earliest-wins keyword race (requires a storm word): a **named
+    storm** ("Hurricane Katrina", "Tropical Storm Milton", "Typhoon
+    Haiyan's" — the candidate must be capitalized and not a common
+    noun like "season"/"track"/"conditions"/"pressure"), **track
+    wording** ("track(s)"/"path(s)"/"trajectory(ies)"), or **ranking
+    wording** ("strongest"/"most intense"/"most powerful", with optional
+    "top N") → `variable="storm-tracks"`, `source="ibtracs"` pinned
+    (NOAA IBTrACS v04r01 global tropical-cyclone best tracks,
+    1980–present, keyless — `survey-currents` v0.11.0+), with an
+    inspectable `VizSpec.source_reason`. Ranking is by lifetime
+    maximum sustained wind (kt), documented in docs/STORMS.md.
+  - Generic storm-environment wording keeps the **unchanged ERA5
+    reading** ("Hurricane conditions …" → `wind` + `msl` overlay);
+    "… with the wind field" / "… with the pressure field" on a
+    track request adds an ERA5 `wind`/`msl` contour overlay
+    (IBTrACS+ERA5 combination).
+  - New `VizSpec` fields: `storm_name=""`, `storm_rank=""`/`"strongest"`,
+    `storm_top_n=None`; `from_dict` stays backward compatible with
+    pre-v0.10.0 dicts.
+  - Dedicated track renderer (src/viz/render.py): cumulative daily
+    track polylines colored by Saffir-Simpson category (TD/TS/C1–C5,
+    winds in kt, USA-agency preference inherited from
+    `survey-currents`), dateline crossings break the polyline (no
+    false Pacific line), genesis markers + name labels, category
+    legend, peak-wind readout; tracks render **above** the Item 8
+    GEBCO/coastline underlay; optional ERA5 contour context beneath
+    the tracks with graceful "absent" degradation recorded in
+    `manifest["render"]["era5_context"]`.
+  - Gazetteer: bare "atlantic"/"atlantic ocean" now alias
+    `north-atlantic` (longest-match keeps "north atlantic" winning).
+  - Docs: new docs/STORMS.md (routing table, parser rules, renderer,
+    Saffir-Simpson colors, agency caveat, pipeline contract,
+    limitations), docs/PARSER.md §6c, README variable/source rows.
+  - 39 new tests (tests/test_storms.py).
+
 ## [0.9.0] - 2026-09-27
 
 ### Added

@@ -38,6 +38,10 @@ Routing rules (documented in docs/PARSER.md):
   ``source_reason``). ``"power-outage"`` (blackout / power-outage
   wording) has no adapter -> ``""``: outage mapping is temporal
   change detection, and a single-epoch lights map would be a lie.
+* ``"storm-tracks"`` anywhere -> ``"ibtracs"`` (NOAA IBTrACS v04r01
+  best tracks, pinned by the parser with an inspectable
+  ``source_reason`` — the archive is global, so no regional
+  restriction applies).
 * ``"chlorophyll"``, ``"burn-scar"``, ``"land-ice"``, and
   ``"power-outage"`` have no fetch adapter -> ``""`` (callers turn this
   into the honest "no adapter" refusal they already produce;
@@ -95,6 +99,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "imerg": "NASA GPM IMERG V07",
     "blackmarble": "NASA Black Marble VNP46A2",
     "gebco": "GEBCO 2024",
+    "ibtracs": "NOAA IBTrACS v04r01",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -111,6 +116,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "imerg": ("currents.imerg", "fetch_imerg"),
     "blackmarble": ("currents.blackmarble", "fetch_blackmarble"),
     "gebco": ("currents.basemaps", "fetch_gebco"),
+    "ibtracs": ("currents.storms", "fetch_ibtracs"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -127,6 +133,7 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "imerg": "0.8.0",
     "blackmarble": "0.9.0",
     "gebco": "0.10.0",
+    "ibtracs": "0.11.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -189,6 +196,10 @@ def default_source(variable: str, region_key: str) -> str:
     # is global, so there is no regional restriction.
     if variable in ("bathymetry", "elevation"):
         return "gebco"
+    # "storm-tracks" route globally to IBTrACS — the archive is global,
+    # so there is no regional restriction.
+    if variable == "storm-tracks":
+        return "ibtracs"
     # "power-outage" (blackout / power-outage wording) has no adapter:
     # outage mapping is temporal change detection across two or more
     # epochs, and a single daily Black Marble map cannot show it — so
@@ -281,6 +292,8 @@ def explain_source(spec: Any) -> str:
                         "VNP46A2 daily corrected radiance"),
         "gebco": "bathymetry/elevation -> GEBCO 2024 global topography "
                  "(15 arc-second, static compilation)",
+        "ibtracs": "storm tracks/identity -> NOAA IBTrACS v04r01 best "
+                   "tracks (global archive)",
     }.get(source, f"variable {variable!r}")
     return (f"source {source!r} ({label}): regional default — {default_why}; "
             "the parser did not pin a source.")

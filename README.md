@@ -98,7 +98,16 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   *underlay*, not a data variable; see docs/BASEMAPS.md). Earliest keyword in the
   text wins (`burn-scar` wins ties against `fire`, `land-ice` wins ties
   against `sea-ice`); **no keyword → `sst`**.
-  **Storms** (`storm/cyclone/hurricane/typhoon`) → `wind` + pressure-isobar overlay.
+  **Storms** (`storm/cyclone/hurricane/typhoon`) → `wind` + pressure-isobar overlay —
+  **except** when the description shows track/identity/ranking intent: a named
+  storm (`Hurricane Katrina`), track wording (`track`/`path`/`trajectory`), or
+  ranking wording (`strongest`/`most intense`/`most powerful`) routes to the new
+  `storm-tracks` variable (NOAA IBTrACS v04r01 best tracks — `survey-currents`
+  v0.11.0+), with the name in `VizSpec.storm_name`, ranking in
+  `VizSpec.storm_rank`/`storm_top_n`, and an inspectable `source_reason`.
+  `storm-tracks` renders as cumulative track polylines colored by Saffir-Simpson
+  category over the basemap underlay; `… with the wind field` adds an ERA5 wind
+  contour context. See [docs/STORMS.md](docs/STORMS.md).
 - **Source pinning** (new in v0.2.0): `high resolution` / `ultra` /
   `coastal detail` / `1 km` + SST → `source="mur"` (NASA JPL MUR v4.1,
   ~1 km). Otherwise `source` stays empty and
@@ -120,7 +129,10 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   `VizSpec.source_reason`. `bathymetry`/`elevation` always pin
   `source="gebco"` (GEBCO 2024 global topography/bathymetry, 15
   arc-second — `survey-currents` v0.10.0+) with an inspectable
-  `source_reason`. Whenever the parser pins a source it
+  `source_reason`. `storm-tracks` always pins `source="ibtracs"` (NOAA
+  IBTrACS v04r01 tropical-cyclone best tracks, 1980–present, keyless —
+  `survey-currents` v0.11.0+) with an inspectable `source_reason`
+  (see docs/STORMS.md). Whenever the parser pins a source it
   records `VizSpec.source_reason`, and
   `viz.sources.explain_source(spec)` explains any spec's routing
   (pinned, default, or refused).
