@@ -21,7 +21,7 @@ KNOWN_STYLES = ("reel-dark", "light")
 #: Fetch adapters (see :mod:`viz.sources`). "" means "not pinned —
 #: resolve the regional default at fetch time" (v0.1.0 specs have no
 #: source and keep working unchanged).
-KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5")
+KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5", "oscar", "cmems-currents")
 #: Variables that may appear in ``VizSpec.overlays`` (drawn as contour
 #: overlays over the base variable, e.g. isobars over a wind map).
 KNOWN_OVERLAYS = ("wind", "msl", "t2m", "tp")

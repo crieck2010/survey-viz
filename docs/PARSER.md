@@ -35,7 +35,7 @@ san-francisco-bay.
 | VizSpec.variable | keywords |
 |---|---|
 | `sst` | sst, temperature(s), thermal, warmth, warm, cold, degree(s), celsius, °c, deg c |
-| `currents` | current(s), flow(s), stream(s), velocity, circulation, drift |
+| `currents` | current(s), flow(s), stream(s), velocity, circulation, drift, eddy/eddies |
 | `chlorophyll` | chlorophyll, chl, algae, algal, bloom(s), phytoplankton |
 | `wind` *(ERA5)* | wind(s), windy, gale(s), gust(s) |
 | `msl` *(ERA5)* | pressure(s), isobar(s), sea-level pressure |
@@ -115,17 +115,26 @@ The parser always emits `cadence="monthly"`, `layout="reel-vertical"`,
 `style="reel-dark"`. (Finer control belongs to the spec/CLI layer, not to
 free text.)
 
-## 6. Source pinning (SST quality keywords)
+## 6. Source pinning (quality keywords)
 
-`VizSpec.source` is pinned to `"mur"` when the description asks for high
-resolution — keywords `high resolution` / `high-resolution`, `ultra`,
-`coastal detail`, `1 km`, `kilometre`/`kilometer` — **and** the variable
-is SST. Anything else leaves `source` empty (`""`), so
+`VizSpec.source` is pinned when the description asks for high resolution —
+keywords `high resolution` / `high-resolution`, `ultra`,
+`coastal detail`, `1 km`, `kilometre`/`kilometer`:
+
+- variable is SST → pinned to `"mur"` (NASA JPL MUR v4.1, ~1 km);
+- variable is `currents` → pinned to `"cmems-currents"` (CMEMS global
+  ocean physics, 1/12° — the coarsest true fit for a high-resolution
+  current request).
+
+Anything else leaves `source` empty (`""`), so
 `viz.sources.resolve_source` applies the regional default at fetch time:
 SST over the 5 Great Lakes → `glsea`, SST anywhere else → `oisst`,
 `wind`/`msl`/`t2m`/`tp` anywhere → `era5` (Copernicus ERA5 reanalysis via
-the CDS API — fetchable in **any** region). `currents`/`chlorophyll` have
-no adapter yet → `""`, and `is_fetchable` refuses them honestly.
+the CDS API — fetchable in **any** region), `currents` anywhere except
+the 5 Great Lakes → `oscar` (NASA PODAAC OSCAR v2.0 — fetchable in any
+non-Great-Lakes region, including the 35th region, `gulf-stream`).
+Great Lakes `currents` and `chlorophyll` have no adapter → `""`, and
+`is_fetchable` refuses them honestly.
 
 Examples:
 
@@ -141,6 +150,13 @@ Examples:
   `variable="wind"`, `overlays=["msl"]`, `source=""` → `era5`
 - "Air temperature across the US East Coast this year" →
   `variable="t2m"`, `region_key="us-east-coast"`, `source=""` → `era5`
+- "North Atlantic currents over the past year" → `variable="currents"`,
+  `source=""` → resolves to `oscar` (NASA PODAAC OSCAR v2.0)
+- "Gulf Stream eddies last summer" → `variable="currents"`,
+  `region_key="gulf-stream"`, `source=""` → resolves to `oscar`
+- "ultra high resolution currents in the Caribbean" →
+  `variable="currents"`, `region_key="caribbean-sea"`,
+  `source="cmems-currents"` (CMEMS global ocean physics)
 
 ## 7. Failure mode
 

@@ -8,8 +8,11 @@ Inputs are duck-typed on purpose — peers are optional, never hard imports:
 
 * ``field``: any object with ``.times``, ``.lats``, ``.lons`` plus grid
   access — either a 3D array attribute (``values``/``data``/``sst``/``grids``)
-  shaped ``(ntime, nlat, nlon)``, or a per-index method
-  (``grid``/``frame``/``at``/``get_frame``). Plain dicts with
+  shaped ``(ntime, nlat, nlon)``, a per-index method
+  (``grid``/``frame``/``at``/``get_frame``), or a survey-currents
+  ``CurrentField`` with 3D ``u``/``v`` (rendered as scalar current speed
+  ``sqrt(u^2+v^2)`` through the scalar path — no quiver/streamline
+  rendering here). Plain dicts with
   ``times``/``lats``/``lons``/``values`` keys also work. Never imports
   survey-currents; a ``GlseaField``-shaped object just works.
 * ``series``: any object with ``.dates``/``.values`` (or
@@ -134,7 +137,21 @@ def _normalize_field(field: Any) -> Tuple[List[_dt.date], Any, Any, Any]:
         lats = np.asarray(field.lats, dtype=float)
         lons = np.asarray(field.lons, dtype=float)
         values = None
+        # CurrentField (survey-currents): render the scalar current speed
+        # sqrt(u^2 + v^2) through the existing scalar path. No
+        # quiver/streamline/particle rendering here — that is the
+        # survey-flow renderer's job. Masked (land/missing) cells become
+        # NaN so they stay out of the color scale and the map.
+        if hasattr(field, "u") and hasattr(field, "v"):
+            u = np.asanyarray(field.u, dtype=float)
+            v = np.asanyarray(field.v, dtype=float)
+            if u.ndim == 3 and v.ndim == 3:
+                mask = np.ma.getmaskarray(u) | np.ma.getmaskarray(v)
+                speed = np.sqrt(np.ma.getdata(u) ** 2 + np.ma.getdata(v) ** 2)
+                values = np.where(mask, np.nan, speed)
         for attr in _GRID_ATTRS:
+            if values is not None:
+                break
             if hasattr(field, attr):
                 arr = getattr(field, attr)
                 if arr is not None and np.ndim(arr) == 3:

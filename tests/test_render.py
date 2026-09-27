@@ -190,3 +190,47 @@ def test_end_to_end_from_parser(tmp_path):
     field, series = _field()
     frames, manifest_path = render_viz(spec, field, series, out_dir=tmp_path / "f")
     assert len(frames) == 3 and Path(manifest_path).is_file()
+
+
+class _FakeCurrentField:
+    """CurrentField-shaped duck-type: .times/.lats/.lons + 3D .u/.v."""
+
+    def __init__(self, times, lats, lons, u, v):
+        self.times = times
+        self.lats = lats
+        self.lons = lons
+        self.u = u
+        self.v = v
+
+
+def test_render_current_field_speed(tmp_path):
+    rng = np.random.default_rng(3)
+    lats = np.linspace(25.0, 43.0, 8)
+    lons = np.linspace(-81.0, -55.0, 10)
+    times = [dt.date(2024, m, 15) for m in (1, 2, 3)]
+    u = np.ma.masked_array(rng.normal(0.3, 0.1, size=(3, 8, 10)))
+    v = np.ma.masked_array(rng.normal(-0.1, 0.05, size=(3, 8, 10)))
+    u[:, 0, 0] = np.ma.masked  # masked cells -> NaN, not off-scale
+    field = _FakeCurrentField(times, lats, lons, u, v)
+    spec = _spec(variable="currents", region_key="gulf-stream",
+                 bbox=(-81.0, 25.0, -55.0, 43.0),
+                 title="Gulf Stream — Surface Currents, 2024")
+    frames, manifest_path = render_viz(spec, field, None, out_dir=tmp_path / "frames")
+    assert len(frames) == 3
+    assert Path(frames[0]).stat().st_size > 0
+    manifest = json.loads(Path(manifest_path).read_text())
+    assert manifest["schema"] == SCHEMA_ID
+
+
+def test_render_current_field_speed_values():
+    from viz.render import _normalize_field
+    lats = np.array([30.0, 31.0])
+    lons = np.array([-70.0, -69.0])
+    times = [dt.date(2024, 1, 15)]
+    u = np.ma.masked_array([[[3.0, 0.0]]])          # 3-4-5 triangle
+    v = np.ma.masked_array([[[4.0, np.ma.masked]]])
+    field = _FakeCurrentField(times, lats, lons, u, v)
+    t, la, lo, values = _normalize_field(field)
+    assert values.shape == (1, 1, 2)
+    assert values[0, 0, 0] == pytest.approx(5.0)
+    assert np.isnan(values[0, 0, 1])  # masked v -> NaN speed

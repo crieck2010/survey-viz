@@ -9,15 +9,19 @@ actually resolved.
 Routing rules (documented in docs/PARSER.md):
 
 * ``spec.source`` set explicitly (``"glsea"`` / ``"oisst"`` / ``"mur"`` /
-  ``"era5"``) always wins. The deterministic parser pins ``"mur"`` when
-  the description asks for high resolution / ultra / coastal detail
-  (SST only).
+  ``"era5"`` / ``"oscar"`` / ``"cmems-currents"``) always wins. The
+  deterministic parser pins ``"mur"`` when the description asks for
+  high resolution / ultra / coastal detail (SST only), and
+  ``"cmems-currents"`` when it asks for high resolution / ultra / 1 km
+  (currents only).
 * Otherwise the regional default applies: SST over one of the 5 Great
   Lakes -> ``"glsea"``; SST anywhere else -> ``"oisst"``;
-  ``wind``/``msl``/``t2m``/``tp`` anywhere -> ``"era5"``.
-* ``"currents"``/``"chlorophyll"`` have no fetch adapter yet -> ``""``
-  (callers turn this into the honest "no adapter" refusal they already
-  produce).
+  ``wind``/``msl``/``t2m``/``tp`` anywhere -> ``"era5"``; ``currents``
+  anywhere except the 5 Great Lakes -> ``"oscar"`` (Great Lakes
+  ``currents`` stays an honest refusal — no lake-scale current adapter
+  exists).
+* ``"chlorophyll"`` has no fetch adapter -> ``""`` (callers turn this
+  into the honest "no adapter" refusal they already produce).
 
 Note: the ``"era5"`` adapter is ``currents.era5.fetch_era5``, whose first
 argument is the variable list — ``fetch_for_source("era5")`` returns the
@@ -47,6 +51,8 @@ SOURCE_LABELS: Dict[str, str] = {
     "oisst": "NOAA OISST v2.1",
     "mur": "NASA JPL MUR v4.1",
     "era5": "Copernicus ERA5 (CDS)",
+    "oscar": "NASA PODAAC OSCAR v2.0",
+    "cmems-currents": "CMEMS Global Ocean Physics (daily)",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -56,6 +62,8 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "oisst": ("currents.sst_global", "fetch_oisst"),
     "mur": ("currents.sst_global", "fetch_mur"),
     "era5": ("currents.era5", "fetch_era5"),
+    "oscar": ("currents.currents_global", "fetch_oscar"),
+    "cmems-currents": ("currents.currents_global", "fetch_cmems_currents"),
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -72,8 +80,10 @@ def default_source(variable: str, region_key: str) -> str:
 
     Returns ``"glsea"`` for SST over the 5 Great Lakes, ``"oisst"`` for
     SST anywhere else, ``"era5"`` for the ERA5 variables
-    (``wind``/``msl``/``t2m``/``tp``) in any region, and ``""`` when no
-    adapter exists (``currents``/``chlorophyll``).
+    (``wind``/``msl``/``t2m``/``tp``) in any region, ``"oscar"`` for
+    ``currents`` in any region except the 5 Great Lakes (Great Lakes
+    currents stay an honest refusal), and ``""`` when no adapter
+    exists (``chlorophyll``).
     """
     variable = str(variable)
     if variable == "sst":
@@ -82,6 +92,10 @@ def default_source(variable: str, region_key: str) -> str:
         return "oisst"
     if variable in ERA5_VARIABLES:
         return "era5"
+    if variable == "currents":
+        if str(region_key) in _great_lakes_keys():
+            return ""
+        return "oscar"
     return ""
 
 
@@ -115,7 +129,8 @@ def fetch_for_source(source: str) -> Callable:
         raise ValueError(
             f"unknown source {source!r}; expected one of {tuple(_SOURCE_ADAPTERS)}")
     module_name, attr = _SOURCE_ADAPTERS[source]
-    min_version = "0.4.0" if source == "era5" else "0.3.0"
+    min_version = ({"era5": "0.4.0", "oscar": "0.5.0",
+                   "cmems-currents": "0.5.0"}.get(source, "0.3.0"))
     try:
         import importlib
         module = importlib.import_module(module_name)

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-26
+
+### Added
+- Global-currents source routing for the new survey-currents v0.5.0
+  adapters (`KNOWN_SOURCES += ("oscar", "cmems-currents")`):
+  `VizSpec.source` may now be `"oscar"` (NASA PODAAC OSCAR v2.0, daily
+  surface currents 1993–present, free Earthdata Login, lazily imported
+  from `currents.currents_global.fetch_oscar`) or `"cmems-currents"`
+  (CMEMS `global-physics-daily` preset, 1/12°, free CMEMS account,
+  lazily imported from
+  `currents.currents_global.fetch_cmems_currents`).
+  Minimum survey-currents version for both is 0.5.0.
+- Default routing for `variable="currents"`: any region except the
+  5 Great Lakes resolves to `"oscar"`; Great Lakes `currents` stays an
+  honest refusal (no lake-scale current adapter exists).
+- Parser: added `r"\bedd(?:y|ies)\b"` to the currents keywords; the
+  high-resolution / ultra / 1-km wording now pins `source="cmems-currents"`
+  for currents (SST pinning to `"mur"` unchanged).
+- New `gulf-stream` gazetteer region (35 regions total; bbox approx
+  `[-81, 25, -55, 43]`).
+- Renderer: a survey-currents `CurrentField` (3D `u`/`v`) renders as the
+  scalar current speed `sqrt(u²+v²)` through the existing scalar path —
+  no quiver/streamline/particle rendering here; that is the survey-flow
+  renderer's job. Masked (land) cells become NaN so they stay out of the
+  color scale.
+- **Deferred:** a Gulf Stream `currents + SST base` particle-flow overlay
+  — current overlay plumbing is contour-only, so particle flow is not
+  implemented in this release.
+
+### Verified parser examples
+- "North Atlantic currents over the past year" → `oscar` / `currents` /
+  `north-atlantic`
+- "Gulf Stream eddies last summer" → `oscar` / `currents` / `gulf-stream`
+- "ultra high resolution currents in the Caribbean" →
+  `cmems-currents` / `currents` / `caribbean-sea`
+
 ## [0.3.0] - 2026-09-26
 
 ### Added

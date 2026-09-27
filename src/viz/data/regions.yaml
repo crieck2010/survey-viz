@@ -188,3 +188,10 @@ regions:
     aliases: [arctic ocean]
     bbox: [-180.0, 66.0, 180.0, 90.0]
     notes: SST fetchable via OISST/MUR in survey-currents v0.3.0+ (sea-ice regions are masked in the source data).
+
+  # ---- Current features (fetchable for currents via OSCAR since v0.4.0) ----
+  - key: gulf-stream
+    name: Gulf Stream
+    aliases: [gulf stream]
+    bbox: [-81.0, 25.0, -55.0, 43.0]
+    notes: Surface currents fetchable via the OSCAR adapter (default) or CMEMS (high-resolution requests) in survey-currents v0.5.0+.

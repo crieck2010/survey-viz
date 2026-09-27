@@ -41,6 +41,21 @@ def test_default_source_non_sst_empty():
     assert default_source("chlorophyll", "north-atlantic") == ""
 
 
+def test_default_source_currents_oscar():
+    assert default_source("currents", "north-atlantic") == "oscar"
+    assert default_source("currents", "gulf-stream") == "oscar"
+    assert default_source("currents", "caribbean-sea") == "oscar"
+    # Great Lakes currents stay an honest refusal.
+    assert default_source("currents", "lake-michigan") == ""
+
+
+def test_resolve_source_currents_oscar():
+    s = _spec(variable="currents", source="")
+    assert resolve_source(s) == "oscar"
+    assert resolve_source(_spec(variable="currents", source="cmems-currents")) == "cmems-currents"
+    assert resolve_source(_spec(variable="currents", region_key="lake-erie", source="")) == ""
+
+
 def test_resolve_source_explicit_wins():
     assert resolve_source(_spec(source="mur")) == "mur"
     assert resolve_source(_spec(source="glsea")) == "glsea"
@@ -72,7 +87,8 @@ def test_resolve_source_duck_typed():
 def test_is_fetchable_spec_aware():
     assert is_fetchable(_spec()) is True            # sst + ocean -> oisst
     assert is_fetchable(_spec(region_key="lake-superior")) is True
-    assert is_fetchable(_spec(variable="currents")) is False
+    assert is_fetchable(_spec(variable="currents")) is True   # -> oscar
+    assert is_fetchable(_spec(variable="currents", region_key="lake-superior")) is False
 
 
 def test_fetch_for_source_lazy_imports():
@@ -81,7 +97,7 @@ def test_fetch_for_source_lazy_imports():
     assert callable(fetch_for_source("oisst"))
     assert callable(fetch_for_source("mur"))
     assert callable(fetch_for_source("glsea"))
-    assert currents.__version__ >= "0.3.0"
+    assert currents.__version__ >= "0.5.0"
 
 
 def test_fetch_for_source_missing_peer_is_actionable(monkeypatch):
@@ -109,7 +125,7 @@ def test_package_exports():
                  "is_source_fetchable", "KNOWN_SOURCES", "SOURCE_LABELS"):
         assert name in viz.__all__
         assert hasattr(viz, name)
-    assert viz.__version__ == "0.3.0"
+    assert viz.__version__ == "0.4.0"
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +187,10 @@ def test_parser_no_quality_keywords_leaves_source_empty():
 def test_parser_quality_keywords_ignored_for_non_sst():
     s = parse_description("High resolution North Atlantic currents over the past 2 years")
     assert s.variable == "currents"
-    assert s.source == ""
+    assert s.source == "cmems-currents"  # quality pin applies to currents
+    s = parse_description("High resolution North Atlantic winds over the past 2 years")
+    assert s.variable == "wind"
+    assert s.source == ""  # quality keywords ignored for non-sst/non-currents
 
 
 def test_parser_great_lakes_default_empty_source():
@@ -217,3 +236,49 @@ def test_ocean_region_bboxes_valid():
 def test_global_bbox_is_full_globe():
     from viz import get_region
     assert tuple(get_region("global")["bbox"]) == (-180.0, -90.0, 180.0, 90.0)
+
+
+# ---------------------------------------------------------------------------
+# oscar / cmems-currents routing (v0.4.0)
+# ---------------------------------------------------------------------------
+
+def test_fetch_for_source_currents_lazy_imports():
+    currents = pytest.importorskip(
+        "currents", reason="optional survey-currents peer not installed")
+    assert callable(fetch_for_source("oscar"))
+    assert callable(fetch_for_source("cmems-currents"))
+    assert currents.__version__ >= "0.5.0"
+
+
+def test_source_labels_for_currents():
+    from viz.sources import SOURCE_LABELS
+    assert SOURCE_LABELS["oscar"] == "NASA PODAAC OSCAR v2.0"
+    assert "CMEMS" in SOURCE_LABELS["cmems-currents"]
+
+
+def test_parser_currents_examples():
+    s = parse_description("North Atlantic currents over the past year")
+    assert s.variable == "currents" and s.region_key == "north-atlantic"
+    assert s.source == "" and resolve_source(s) == "oscar"
+
+    s = parse_description("Gulf Stream eddies last summer")
+    assert s.variable == "currents" and s.region_key == "gulf-stream"
+    assert s.source == "" and resolve_source(s) == "oscar"
+
+    s = parse_description("ultra high resolution currents in the Caribbean")
+    assert s.variable == "currents" and s.region_key == "caribbean-sea"
+    assert s.source == "cmems-currents"
+
+
+def test_parser_eddy_keyword_maps_to_currents():
+    s = parse_description("Gulf Stream eddy tracking last summer")
+    assert s.variable == "currents"
+
+
+def test_gulf_stream_region_registered():
+    from viz.gazetteer import get_region, load_regions
+    r = get_region("gulf-stream")
+    assert r is not None
+    assert tuple(r["bbox"]) == (-81.0, 25.0, -55.0, 43.0)
+    # 35 regions: 34 from v0.3.0 + gulf-stream.
+    assert len(load_regions()) == 35

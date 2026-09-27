@@ -37,6 +37,7 @@ _VARIABLE_PATTERNS = {
         r"velocity",
         r"circulation",
         r"drift",
+        r"\bedd(?:y|ies)\b",
     ],
     "chlorophyll": [
         r"chlorophyll",
@@ -233,9 +234,13 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool]:
 
 # --- source-quality keywords ---------------------------------------------------
 # SST-only: asking for high resolution / ultra / coastal detail pins
-# VizSpec.source = "mur" (NASA JPL MUR v4.1, ~1 km). Anything else leaves
-# source empty so viz.sources.resolve_source applies the regional default
-# (Great Lakes -> GLSEA, other SST -> OISST). Documented in docs/PARSER.md.
+# VizSpec.source = "mur" (NASA JPL MUR v4.1, ~1 km). Currents: the same
+# high-resolution / ultra / 1-km wording pins VizSpec.source =
+# "cmems-currents" (CMEMS global ocean physics, 1/12° — coarsest true fit
+# for a high-resolution current request). Anything else leaves source
+# empty so viz.sources.resolve_source applies the regional default
+# (Great Lakes SST -> GLSEA, other SST -> OISST, non-Great-Lakes
+# currents -> OSCAR). Documented in docs/PARSER.md.
 _SOURCE_QUALITY_PATTERNS = [
     r"high[ -]?resolution",
     r"\bultra\b",
@@ -247,12 +252,17 @@ _SOURCE_QUALITY_PATTERNS = [
 
 
 def _parse_source(text: str, variable: str) -> str:
-    """Return the pinned source (``"mur"``) or ``""`` for the default."""
-    if variable != "sst":
-        return ""
+    """Return the pinned source (``"mur"`` / ``"cmems-currents"``) or
+    ``""`` for the default."""
     lowered = text.lower()
-    if any(re.search(p, lowered) for p in _SOURCE_QUALITY_PATTERNS):
-        return "mur"
+    if variable == "sst":
+        if any(re.search(p, lowered) for p in _SOURCE_QUALITY_PATTERNS):
+            return "mur"
+        return ""
+    if variable == "currents":
+        if any(re.search(p, lowered) for p in _SOURCE_QUALITY_PATTERNS):
+            return "cmems-currents"
+        return ""
     return ""
 
 

@@ -64,10 +64,10 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
 ## Parser rules (summary)
 
 - **Region**: gazetteer display names/aliases, case-insensitive, longest match wins.
-  34 regions: the 5 Great Lakes + 21 coastal regions/bays/seas + 8 ocean
-  basins (`data/regions.yaml`).
+  35 regions: the 5 Great Lakes + 21 coastal regions/bays/seas + 8 ocean
+  basins + the Gulf Stream (`data/regions.yaml`).
 - **Variable**: `temperature/sst/thermal/warmth/cold` → `sst`;
-  `current/flow/stream/velocity` → `currents`; `chlorophyll/chl/algae/bloom` →
+  `current/flow/stream/velocity/eddy/eddies` → `currents`; `chlorophyll/chl/algae/bloom` →
   `chlorophyll`; **wind(s)/windy/gale(s)** → `wind`; **pressure/isobar(s)** →
   `msl`; **air temperature/heatwave/heat** → `t2m`;
   **rain/rainfall/precipitation/deluge** → `tp`. Earliest keyword in the
