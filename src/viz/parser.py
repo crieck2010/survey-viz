@@ -146,6 +146,36 @@ _VARIABLE_PATTERNS = {
         # against later variable keywords (documented in docs/PARSER.md).
         r"\bdevelopment\b",
     ],
+    # "country-borders" is listed AFTER "night-lights" so the power-outage
+    # safety rule above keeps working; it has no fetch adapter — Natural
+    # Earth vectors are a cartographic underlay, not a data variable —
+    # so "country borders" alone is an honest refusal
+    # (see viz.sources.default_source).
+    "country-borders": [
+        r"\bcountr(?:y|ies)[ -]?(?:borders?|boundaries|outlines?)\b",
+        r"\bnational[ -]?borders?\b",
+        r"\bpolitical[ -]?boundar(?:y|ies)\b",
+    ],
+    # --- GEBCO variables (survey-currents v0.10.0+, source "gebco") ---
+    # "bathymetry" is listed before "elevation" so "seafloor depth"
+    # reads as bathymetry; both route globally to GEBCO 2024.
+    "bathymetry": [
+        r"\bbathymetr(?:y|ic)\b",
+        r"\bseafloors?\b",
+        r"\bsea[ -]?floors?\b",
+        # Bare "depth"/"depths" but not "in-depth" (lookbehind excludes
+        # the hyphenated intensifier).
+        r"(?<![\w-])depths?\b",
+        r"\btrenches?\b",
+        r"\babyss(?:es|al)?\b",
+        r"\bhadal\b",
+    ],
+    "elevation": [
+        r"\belevations?\b",
+        r"\bterrains?\b",
+        r"\btopograph(?:y|ic)\b",
+        r"\bmountains?\b",
+    ],
 }
 
 # Storm keywords: they name the ("wind", overlays=["msl"]) combination
@@ -172,6 +202,9 @@ _VARIABLE_LABELS = {
     "land-ice": "Land Ice",
     "night-lights": "Night Lights",
     "power-outage": "Power Outage",
+    "bathymetry": "Bathymetry",
+    "elevation": "Elevation",
+    "country-borders": "Country Borders",
 }
 
 # --- time phrases ------------------------------------------------------------
@@ -390,6 +423,9 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
       Marble VNP46A2 V002 daily, gap-filled lunar BRDF-adjusted DNB
       radiance, 2012-01-19–present) with an inspectable
       ``source_reason``.
+    * ``"bathymetry"`` / ``"elevation"`` always pin ``"gebco"`` (GEBCO
+      2024 global topography/bathymetry, 15 arc-second) with an
+      inspectable ``source_reason`` — in every region.
 
     The reason is always populated when a source is pinned (used for
     ``VizSpec.source_reason``).
@@ -429,6 +465,10 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
         return ("blackmarble",
                 "night-lights observations -> "
                 "NASA Black Marble VNP46A2 daily corrected radiance")
+    if variable in ("bathymetry", "elevation"):
+        return ("gebco",
+                f"{variable} description -> "
+                "GEBCO 2024 global topography/bathymetry (15 arc-second)")
     return "", ""
 
 
@@ -515,9 +555,17 @@ def parse_description(
     spec_title = title or _derive_title(region["name"], variable, start, end)
     # Sea ice and night lights change fast like fire: one frame per day,
     # not one representative day per month (v0.6.0 for sea ice; v0.8.0
-    # for night lights — the Black Marble source is daily).
-    cadence = "daily" if variable in ("fire", "sea-ice", "night-lights") \
-        else "monthly"
+    # for night lights — the Black Marble source is daily). Bathymetry
+    # and elevation are static: yearly cadence, and a single frame when
+    # no explicit time phrase was given (v0.9.0 — GEBCO is a static
+    # compilation, not a time series).
+    if variable in ("bathymetry", "elevation"):
+        cadence = "yearly"
+        if default_time:
+            start = end = today
+    else:
+        cadence = "daily" if variable in ("fire", "sea-ice", "night-lights") \
+            else "monthly"
     source, source_reason = _parse_source(normalized, variable)
     return VizSpec(
         title=spec_title,

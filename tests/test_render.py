@@ -66,7 +66,7 @@ def test_render_dict_field_and_series(tmp_path):
 def test_manifest_schema_and_contents(tmp_path):
     field, series = _field()
     spec = _spec(vmin=0.0, vmax=20.0)
-    frames, manifest_path = render_viz(spec, field, series, out_dir=tmp_path / "f")
+    frames, manifest_path = render_viz(spec, field, series, underlay=False, out_dir=tmp_path / "f")
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
     assert manifest["schema"] == SCHEMA_ID
@@ -124,7 +124,7 @@ def test_monthly_cadence_buckets_to_one_frame_per_month(tmp_path):
     values = np.zeros((5, len(lats), len(lons)))
     field = {"times": times, "lats": lats, "lons": lons, "values": values}
     spec = _spec(start=dt.date(2026, 1, 1), end=dt.date(2026, 2, 28))
-    frames, manifest_path = render_viz(spec, field, None, out_dir=tmp_path / "f")
+    frames, manifest_path = render_viz(spec, field, None, underlay=False, out_dir=tmp_path / "f")
     assert len(frames) == 2
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
@@ -140,14 +140,14 @@ def test_daily_cadence_capped_at_max_frames(tmp_path):
     values = np.zeros((n, len(lats), len(lons)))
     field = {"times": times, "lats": lats, "lons": lons, "values": values}
     spec = _spec(cadence="daily", start=times[0], end=times[-1])
-    frames, _ = render_viz(spec, field, None, out_dir=tmp_path / "f")
+    frames, _ = render_viz(spec, field, None, underlay=False, out_dir=tmp_path / "f")
     assert len(frames) == MAX_FRAMES
 
 
 def test_light_style_renders(tmp_path):
     field, series = _field()
     spec = _spec(style="light")
-    frames, manifest_path = render_viz(spec, field, series, out_dir=tmp_path / "f")
+    frames, manifest_path = render_viz(spec, field, series, underlay=False, out_dir=tmp_path / "f")
     assert len(frames) == 3
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
@@ -188,7 +188,7 @@ def test_frame_dimensions_1080x1920(tmp_path):
 def test_end_to_end_from_parser(tmp_path):
     spec = parse_description("Lake Superior surface temperature this year", today=TODAY)
     field, series = _field()
-    frames, manifest_path = render_viz(spec, field, series, out_dir=tmp_path / "f")
+    frames, manifest_path = render_viz(spec, field, series, underlay=False, out_dir=tmp_path / "f")
     assert len(frames) == 3 and Path(manifest_path).is_file()
 
 
@@ -215,7 +215,7 @@ def test_render_current_field_speed(tmp_path):
     spec = _spec(variable="currents", region_key="gulf-stream",
                  bbox=(-81.0, 25.0, -55.0, 43.0),
                  title="Gulf Stream — Surface Currents, 2024")
-    frames, manifest_path = render_viz(spec, field, None, out_dir=tmp_path / "frames")
+    frames, manifest_path = render_viz(spec, field, None, underlay=False, out_dir=tmp_path / "frames")
     assert len(frames) == 3
     assert Path(frames[0]).stat().st_size > 0
     manifest = json.loads(Path(manifest_path).read_text())

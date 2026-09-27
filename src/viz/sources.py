@@ -94,6 +94,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "nsidc": "NSIDC Sea Ice Index (G02135 v4.0)",
     "imerg": "NASA GPM IMERG V07",
     "blackmarble": "NASA Black Marble VNP46A2",
+    "gebco": "GEBCO 2024",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -109,6 +110,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "nsidc": ("currents.sea_ice", "fetch_nsidc_sic"),
     "imerg": ("currents.imerg", "fetch_imerg"),
     "blackmarble": ("currents.blackmarble", "fetch_blackmarble"),
+    "gebco": ("currents.basemaps", "fetch_gebco"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -124,6 +126,7 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "nsidc": "0.7.0",
     "imerg": "0.8.0",
     "blackmarble": "0.9.0",
+    "gebco": "0.10.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -182,10 +185,17 @@ def default_source(variable: str, region_key: str) -> str:
     # and routing it to NSIDC would be a lie.
     if variable == "night-lights":
         return "blackmarble"
+    # "bathymetry" / "elevation" route globally to GEBCO 2024 — the grid
+    # is global, so there is no regional restriction.
+    if variable in ("bathymetry", "elevation"):
+        return "gebco"
     # "power-outage" (blackout / power-outage wording) has no adapter:
     # outage mapping is temporal change detection across two or more
     # epochs, and a single daily Black Marble map cannot show it — so
     # it is refused rather than misrendered.
+    # "country-borders" has no adapter either: Natural Earth vectors
+    # are a cartographic underlay, not a data variable — "country
+    # borders" alone is refused rather than rendered as an empty map.
     return ""
 
 
@@ -233,6 +243,12 @@ def _explain_refusal(variable: str, region_key: str) -> str:
                 "is temporal change detection across two or more epochs — "
                 "a single daily Black Marble night-lights map cannot show "
                 "it, so it is refused rather than misrendered.")
+    if variable == "country-borders":
+        return ("no source: 'country-borders' is cartographic context, not "
+                "a data variable — Natural Earth country vectors are drawn "
+                "as a map underlay (see docs/BASEMAPS.md), never as the "
+                "visualization itself, so 'country borders' alone is "
+                "refused rather than rendered as an empty map.")
     return f"no source: no fetch adapter exists for variable {variable!r}."
 
 
@@ -263,6 +279,8 @@ def explain_source(spec: Any) -> str:
         "imerg": "precipitation with no long-record wording",
         "blackmarble": ("night-lights observations -> NASA Black Marble "
                         "VNP46A2 daily corrected radiance"),
+        "gebco": "bathymetry/elevation -> GEBCO 2024 global topography "
+                 "(15 arc-second, static compilation)",
     }.get(source, f"variable {variable!r}")
     return (f"source {source!r} ({label}): regional default — {default_why}; "
             "the parser did not pin a source.")

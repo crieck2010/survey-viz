@@ -91,13 +91,17 @@ def test_is_fetchable_spec_aware():
     assert is_fetchable(_spec(variable="currents", region_key="lake-superior")) is False
 
 
+def _version_tuple(version: str):
+    return tuple(int(p) for p in version.split(".")[:3])
+
+
 def test_fetch_for_source_lazy_imports():
     currents = pytest.importorskip(
         "currents", reason="optional survey-currents peer not installed")
     assert callable(fetch_for_source("oisst"))
     assert callable(fetch_for_source("mur"))
     assert callable(fetch_for_source("glsea"))
-    assert currents.__version__ >= "0.5.0"
+    assert _version_tuple(currents.__version__) >= (0, 5, 0)
 
 
 def test_fetch_for_source_missing_peer_is_actionable(monkeypatch):
@@ -125,7 +129,7 @@ def test_package_exports():
                  "is_source_fetchable", "KNOWN_SOURCES", "SOURCE_LABELS"):
         assert name in viz.__all__
         assert hasattr(viz, name)
-    assert viz.__version__ == "0.8.0"
+    assert viz.__version__ == "0.9.0"
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +251,7 @@ def test_fetch_for_source_currents_lazy_imports():
         "currents", reason="optional survey-currents peer not installed")
     assert callable(fetch_for_source("oscar"))
     assert callable(fetch_for_source("cmems-currents"))
-    assert currents.__version__ >= "0.5.0"
+    assert _version_tuple(currents.__version__) >= (0, 5, 0)
 
 
 def test_source_labels_for_currents():

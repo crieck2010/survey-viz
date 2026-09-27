@@ -45,6 +45,11 @@ san-francisco-bay.
 | `burn-scar` *(no adapter)* | burn scar(s), burned area(s), burn severity |
 | `sea-ice` *(NSIDC)* | sea ice / sea-ice, pack ice, ice concentration, ice cover, ice extent, **ice** |
 | `land-ice` *(no adapter)* | glacier(s), ice sheet(s), iceberg(s), land ice |
+| `night-lights` *(Black Marble)* | black marble, vnp46a2, night/city/urban light(s), light pollution, electrification |
+| `power-outage` *(no adapter)* | blackout(s), power outage(s) |
+| `bathymetry` *(GEBCO)* | bathymetry, seafloor, depth(s) (not "in-depth"), trench(es), abyss, hadal |
+| `elevation` *(GEBCO)* | elevation(s), terrain(s), topography, mountain(s) |
+| `country-borders` *(no adapter)* | country borders/boundaries, national borders, political boundaries |
 
 Rules:
 
@@ -156,9 +161,12 @@ Notes:
 ## 5. Cadence / layout / style
 
 The parser always emits `layout="reel-vertical"`, `style="reel-dark"`,
-and `cadence="monthly"` — except for `fire` and `sea-ice`, which emit
-`cadence="daily"`. (Finer control belongs to the spec/CLI layer, not to
-free text.)
+and `cadence="monthly"` — except for `fire`, `sea-ice`, and
+`night-lights`, which emit `cadence="daily"`, and `bathymetry` /
+`elevation`, which emit `cadence="yearly"` (GEBCO is a static
+compilation, not a time series; with no explicit time phrase the
+spec collapses to a single frame, `start == end == today`). (Finer
+control belongs to the spec/CLI layer, not to free text.)
 
 ## 6. Source pinning (quality keywords)
 
@@ -191,6 +199,13 @@ V002 daily gap-filled lunar BRDF-adjusted DNB radiance,
 2012-01-19–present, free Earthdata Login — the parser always pins it,
 with `source_reason="night-lights observations -> NASA Black Marble
 VNP46A2 daily corrected radiance"`).
+`bathymetry` / `elevation` → `gebco` in any region (GEBCO 2024 global
+topography/bathymetry, 15 arc-second — the parser always pins it,
+with an inspectable `source_reason`, e.g. `"bathymetry description ->
+GEBCO 2024 global topography/bathymetry (15 arc-second)"`).
+`country-borders` has no adapter — Natural Earth country vectors are
+a cartographic *underlay*, not a data variable, so "country borders"
+alone is refused honestly (see `docs/BASEMAPS.md`).
 
 ### 6a. Precipitation: observed (IMERG) vs reanalysis (ERA5)
 

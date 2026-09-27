@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .gazetteer import get_region, is_fetchable
+from .gazetteer import get_region
+from .sources import is_fetchable as _spec_is_fetchable
 from .parser import UnparseableDescription, parse_description
 from .render import render_viz
 from .spec import VizSpec
@@ -29,10 +30,11 @@ def _cmd_parse(args: argparse.Namespace) -> int:
         return 2
     print(json.dumps(spec.to_dict(), indent=2))
     region = get_region(spec.region_key)
-    if region and not is_fetchable(spec.region_key):
+    if region and not _spec_is_fetchable(spec):
         print(
             f"\nnote: {region['name']} parses fine, but no fetch adapter exists yet "
-            "(only the 5 Great Lakes are fetchable today via survey-currents' GLSEA adapter).",
+            "for this variable/region combination (see `viz parse` sources and "
+            "docs/PARSER.md).",
             file=sys.stderr,
         )
     return 0
@@ -80,7 +82,9 @@ def _synthetic_demo():
 
 def _cmd_demo(args: argparse.Namespace) -> int:
     spec, field, series = _synthetic_demo()
-    frames, manifest = render_viz(spec, field, series, out_dir=args.out_dir)
+    # The demo is documented as fully offline: no basemap underlay fetch.
+    frames, manifest = render_viz(spec, field, series, out_dir=args.out_dir,
+                                  underlay=False)
     print(f"survey-viz {__version__} demo")
     print(f"  spec : {spec.title}")
     print(f"  frames: {len(frames)} -> {args.out_dir}/")
@@ -120,7 +124,8 @@ def _cmd_render(args: argparse.Namespace) -> int:
     series = _load_series_csv(Path(args.series_csv)) if args.series_csv else None
     try:
         frames, manifest = render_viz(
-            spec, field, series, out_dir=args.out_dir, layout=args.layout, style=args.style
+            spec, field, series, out_dir=args.out_dir, layout=args.layout,
+            style=args.style, underlay=not args.no_underlay,
         )
     except RuntimeError as exc:  # e.g. matplotlib missing
         print(f"error: {exc}", file=sys.stderr)
@@ -164,6 +169,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--out-dir", default="frames", help="Where to write frames.")
     r.add_argument("--layout", default="reel-vertical")
     r.add_argument("--style", default=None, help="reel-dark (default) or light.")
+    r.add_argument("--no-underlay", action="store_true",
+                   help="Disable the GEBCO/coastline basemap underlay.")
     r.set_defaults(func=_cmd_render)
     return parser
 

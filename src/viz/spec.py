@@ -17,7 +17,9 @@ KNOWN_VARIABLES = ("sst", "currents", "chlorophyll",
                    "wind", "msl", "t2m", "tp",
                    "fire", "burn-scar",
                    "sea-ice", "land-ice",
-                   "night-lights", "power-outage")
+                   "night-lights", "power-outage",
+                   "bathymetry", "elevation",
+                   "country-borders")
 KNOWN_CADENCES = ("daily", "monthly", "yearly")
 KNOWN_LAYOUTS = ("reel-vertical",)
 KNOWN_STYLES = ("reel-dark", "light")
@@ -25,7 +27,7 @@ KNOWN_STYLES = ("reel-dark", "light")
 #: resolve the regional default at fetch time" (v0.1.0 specs have no
 #: source and keep working unchanged).
 KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5", "oscar", "cmems-currents",
-                 "firms", "nsidc", "imerg", "blackmarble")
+                 "firms", "nsidc", "imerg", "blackmarble", "gebco")
 #: Variables that may appear in ``VizSpec.overlays`` (drawn as contour
 #: overlays over the base variable, e.g. isobars over a wind map).
 KNOWN_OVERLAYS = ("wind", "msl", "t2m", "tp")
@@ -101,6 +103,18 @@ class VizSpec:
             map, e.g. ``("msl",)`` for isobars over a wind field (the
             "storm" combination). Max ``MAX_OVERLAYS`` entries, each in
             ``KNOWN_OVERLAYS`` and different from ``variable``.
+        underlay: optional basemap underlay drawn beneath the variable
+            map (GEBCO tint/hillshade + Natural Earth coastlines,
+            ``True`` by default). The underlay is fetched lazily from
+            the survey-currents peer (``currents.basemaps``,
+            survey-currents>=0.10.0) and cached; when the peer or the
+            data is unavailable the renderer falls back to the plain
+            background and records the underlay status in the frame
+            manifest — never a crash, never silent wrongness. Set to
+            ``False`` for the plain background always. For the
+            ``"bathymetry"``/``"elevation"`` variables the GEBCO tint is
+            skipped (it *is* the variable) but coastlines are still
+            drawn.
     """
 
     title: str
@@ -117,6 +131,7 @@ class VizSpec:
     source: str = ""
     source_reason: str = ""
     overlays: Tuple[str, ...] = ()
+    underlay: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not self.title.strip():
@@ -174,6 +189,10 @@ class VizSpec:
                 f"got {len(overlays)}")
         # Canonicalize (tuple of str) so == / to_dict are stable.
         self.overlays = overlays
+        if not isinstance(self.underlay, bool):
+            raise TypeError(
+                "VizSpec.underlay: expected bool, got "
+                f"{type(self.underlay).__name__}")
 
     def to_dict(self) -> Dict[str, Any]:
         """JSON-serializable dict."""
@@ -192,6 +211,7 @@ class VizSpec:
             "source": self.source,
             "source_reason": self.source_reason,
             "overlays": list(self.overlays),
+            "underlay": self.underlay,
         }
 
     @classmethod
@@ -199,7 +219,8 @@ class VizSpec:
         """Rebuild from :meth:`to_dict` output (dates may be ISO strings).
 
         v0.2.0 dicts without ``"overlays"`` load unchanged (default ``()``);
-        dicts without ``"source_reason"`` (pre-v0.7.0) load with ``""``.
+        dicts without ``"source_reason"`` (pre-v0.7.0) load with ``""``;
+        dicts without ``"underlay"`` (pre-v0.9.0) load with ``True``.
         """
         if not isinstance(data, dict):
             raise TypeError(f"VizSpec.from_dict: expected dict, got {type(data).__name__}")

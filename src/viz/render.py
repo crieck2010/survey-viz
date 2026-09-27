@@ -77,6 +77,25 @@ _VARIABLE_UNITS = {
     # carrying it degrades gracefully in messages).
     "night-lights": "nW/cm²/sr",
     "power-outage": "",
+    # GEBCO 2024 topography/bathymetry (survey-currents v0.10.0+,
+    # source "gebco"): metres, positive up ("country-borders" has no
+    # adapter and is never rendered).
+    "bathymetry": "m",
+    "elevation": "m",
+    "country-borders": "",
+}
+
+#: Colormaps per variable for the main map panel. Variables not listed
+#: fall back to the style default.
+_VARIABLE_CMAPS = {
+    "bathymetry": "Blues_r",   # deep = dark blue
+    "elevation": "terrain",
+}
+
+#: Coastline color per style for the basemap underlay.
+_UNDERLAY_COAST_COLOR = {
+    "reel-dark": "#9fd8ff",
+    "light": "#2f5d8a",
 }
 
 #: Contour defaults per overlay variable: contour every ``step`` units,
@@ -296,12 +315,22 @@ def render_viz(
     out_dir="frames",
     layout: str = "reel-vertical",
     style: Optional[str] = None,
+    underlay: Optional[bool] = None,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
     Returns ``(frames_list, manifest_path)``. ``frames_list`` holds absolute
     file paths in render order; the manifest is directly consumable by
     survey-animate's ``--frames-dir`` / manifest path.
+
+    ``underlay`` controls the optional basemap underlay (GEBCO
+    tint/hillshade + Natural Earth coastlines, drawn beneath the
+    variable map wherever the variable is NaN): ``None`` (default)
+    follows ``spec.underlay``; ``True``/``False`` override it. The
+    underlay is fetched once per render (lazy peer import, cached);
+    when the peer or the data is unavailable the renderer falls back
+    to the plain background and records the underlay status in the
+    manifest — never a crash, never silent wrongness.
     """
     if layout != "reel-vertical":
         raise ValueError(f"Unknown layout: {layout!r} (only 'reel-vertical' in v0.1.0)")
@@ -316,6 +345,51 @@ def render_viz(
     frame_idx = _bucket_indices(times, spec.cadence)
     overlay_arrays = _overlay_grids(field, tuple(getattr(spec, "overlays", ())), len(times))
 
+    # Optional universal basemap underlay (fetched once, not per frame).
+    want_underlay = bool(spec.underlay) if underlay is None else bool(underlay)
+    underlay_rgba = None
+    underlay_extent = None
+    coastline_segs: List[Dict[str, Any]] = []
+    underlay_status: Dict[str, Any] = {"status": "disabled", "reason": "",
+                                       "topo": False, "coastline_segments": 0,
+                                       "resolution": None,
+                                       "coastline_scale": None}
+    if want_underlay:
+        from .underlay import fetch_underlay, hillshade
+        info = fetch_underlay(
+            tuple(float(v) for v in spec.bbox),
+            include_topo=spec.variable not in ("bathymetry", "elevation"))
+        underlay_status = {
+            "status": info["status"],
+            "reason": info["reason"],
+            "topo": info["topo"] is not None,
+            "coastline_segments": info["n_coastline_segments"],
+            "resolution": info["resolution"],
+            "coastline_scale": info["coastline_scale"],
+        }
+        if info["status"] == "ok":
+            coastline_segs = info["coastlines"]
+            topo = info["topo"]
+            if topo is not None:
+                tvals = np.array(topo["values"], dtype=float)
+                tlats = np.array(topo["lats"], dtype=float)
+                tlons = np.array(topo["lons"], dtype=float)
+                tres = float(topo["resolution"])
+                lo, hi = float(np.nanmin(tvals)), float(np.nanmax(tvals))
+                if not lo < hi:
+                    hi = lo + 1.0
+                rgba = plt.get_cmap("terrain")(
+                    np.clip((tvals - lo) / (hi - lo), 0.0, 1.0))
+                shade = np.nan_to_num(hillshade(tvals, tres), nan=0.75)
+                rgba[..., :3] *= (0.55 + 0.45 * shade)[..., None]
+                rgba[..., 3] = 0.9
+                rgba[np.isnan(tvals), 3] = 0.0
+                underlay_rgba = rgba
+                underlay_extent = [float(tlons[0] - tres / 2),
+                                   float(tlons[-1] + tres / 2),
+                                   float(tlats[-1] - tres / 2),
+                                   float(tlats[0] + tres / 2)]
+
     # Fixed color scale: from the spec when given, else the full data range once.
     vmin = spec.vmin if spec.vmin is not None else float(np.nanmin(values))
     vmax = spec.vmax if spec.vmax is not None else float(np.nanmax(values))
@@ -323,6 +397,7 @@ def render_viz(
         vmax = vmin + 1.0  # degenerate constant field: avoid a zero-range cmap
 
     st = _STYLE[style]
+    var_cmap = _VARIABLE_CMAPS.get(spec.variable, st["cmap"])
     unit = _VARIABLE_UNITS.get(spec.variable, "")
     region = get_region(spec.region_key)
     region_name = region["name"] if region else spec.region_key
@@ -369,9 +444,20 @@ def render_viz(
         # Map panel --------------------------------------------------------
         ax_m = fig.add_axes([0.04, 0.36, 0.92, 0.52])
         ax_m.set_facecolor(st["axes"])
+        # Basemap underlay (beneath the variable): GEBCO tint/hillshade
+        # shows wherever the variable field is NaN; coastlines draw over
+        # the variable for cartographic context.
+        if underlay_rgba is not None:
+            ax_m.imshow(underlay_rgba, extent=underlay_extent,
+                        origin="upper", aspect="auto", zorder=1)
         mesh = ax_m.pcolormesh(
-            lons, lats, grid, vmin=vmin, vmax=vmax, cmap=st["cmap"], shading="auto"
+            lons, lats, grid, vmin=vmin, vmax=vmax, cmap=var_cmap, shading="auto"
         )
+        if coastline_segs:
+            coast_color = _UNDERLAY_COAST_COLOR[style]
+            for seg in coastline_segs:
+                ax_m.plot(seg["lons"], seg["lats"], color=coast_color,
+                          lw=1.2, zorder=5, solid_capstyle="round")
         ax_m.set_xlim(lon_min, lon_max)
         ax_m.set_ylim(lat_min, lat_max)
         ax_m.tick_params(colors=st["muted"], labelsize=14)
@@ -487,12 +573,13 @@ def render_viz(
         "render": {
             "layout": layout,
             "style": style,
-            "cmap": st["cmap"],
+            "cmap": var_cmap,
             "vmin": vmin,
             "vmax": vmax,
             "n_frames": len(frames),
             "engine": f"survey-viz {__version__}",
             "created": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "underlay": underlay_status,
         },
     }
     manifest_path = out / "manifest.json"

@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-27
+
+### Added
+- GEBCO variables (`KNOWN_VARIABLES += ("bathymetry", "elevation")`,
+  `KNOWN_SOURCES += ("gebco",)`):
+  - `variable="bathymetry"` (keywords: `bathymetry`, `seafloor`,
+    `depth(s)` — the hyphenated intensifier "in-depth" deliberately
+    does *not* match — `trench(es)`, `abyss`, `hadal`) and
+    `variable="elevation"` (keywords: `elevation(s)`, `terrain(s)`,
+    `topography`, `mountain(s)`) always pin `source="gebco"` —
+    GEBCO 2024 global topography/bathymetry, 15 arc-second — with an
+    inspectable `VizSpec.source_reason` ("bathymetry/elevation
+    description -> GEBCO 2024 global topography/bathymetry
+    (15 arc-second)"). Regional default is `gebco` in any region;
+    lazily imported from `currents.basemaps.fetch_gebco` (minimum
+    survey-currents 0.10.0, honest upgrade message in
+    `fetch_for_source`).
+  - GEBCO is a static compilation, not a time series: cadence is
+    `yearly`, and with no explicit time phrase the spec collapses to
+    a single frame (`start == end == today`). Colormaps: `Blues_r`
+    for bathymetry (deep = dark), `terrain` for elevation; units
+    metres.
+  - `variable="country-borders"` (keywords: `country borders /
+    boundaries`, `national borders`, `political boundaries`) parses
+    but has **no fetch adapter**: Natural Earth country vectors are
+    cartographic context, not a data variable — "country borders"
+    alone is refused honestly (the refusal message points at the
+    coastline underlay) rather than rendered as an empty map.
+- Universal basemap underlay (new `viz.underlay` module, on by
+  default via `VizSpec.underlay=True`, overridable per render with
+  `render_viz(..., underlay=True/False)`):
+  - GEBCO tint + hillshade (0.25°, auto-coarsened for huge regions)
+    drawn *beneath* the variable map wherever the variable is NaN,
+    plus Natural Earth coastlines (`110m`/`50m` by region width)
+    drawn *over* the variable for cartographic context. For
+    `bathymetry`/`elevation` the tint is skipped (GEBCO *is* the
+    variable) while coastlines are still drawn.
+  - Lazy peer loading (`currents.basemaps`, survey-currents ≥
+    0.10.0); disk cache via the peer (SHA-256 sidecars) plus a
+    small in-process cache so multi-frame renders fetch once.
+  - Never crashes, never silently wrong: every failure mode (peer
+    missing, network down, corrupt cache) returns
+    `status="unavailable"` with a reason; the renderer falls back to
+    the plain background. `manifest["render"]["underlay"]` records
+    `status`/`reason`/`topo`/`coastline_segments`/`resolution`/
+    `coastline_scale` for every render.
+  - `docs/BASEMAPS.md` documents the underlay contract, the
+    country-borders refusal, and GEBCO-as-variable routing.
+- 36 offline tests (`tests/test_basemaps.py`): parser terms and
+  GEBCO pinning with `source_reason`, static single-frame cadence,
+  country-borders honest refusal, adapter wiring, underlay ok /
+  failure-fallback / disabled paths, tint-skip for bathymetry, and
+  per-variable colormaps — the peer is monkeypatched, so no test
+  touches the network.
+
 ## [0.8.0] - 2026-09-27
 
 ### Added

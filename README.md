@@ -87,7 +87,15 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   `power-outage` (parses, but has no fetch adapter — honest refusal:
   outage mapping is temporal change detection, not a single-epoch
   lights map; blackout wording anywhere overrides a `night-lights`
-  win so it is never silently misrendered). Earliest keyword in the
+  win so it is never silently misrendered). **bathymetry / seafloor /
+  depth / trench / abyss** → `bathymetry`, **elevation / terrain /
+  topography / mountain(s)** → `elevation` (both route globally to
+  GEBCO 2024 — `survey-currents` v0.10.0+ — with an inspectable
+  `source_reason`; static variables, so cadence is `yearly` and a
+  bare request renders one frame). **country borders / national
+  borders** → `country-borders` (parses, but has no fetch adapter —
+  honest refusal: Natural Earth country vectors are a cartographic
+  *underlay*, not a data variable; see docs/BASEMAPS.md). Earliest keyword in the
   text wins (`burn-scar` wins ties against `fire`, `land-ice` wins ties
   against `sea-ice`); **no keyword → `sst`**.
   **Storms** (`storm/cyclone/hurricane/typhoon`) → `wind` + pressure-isobar overlay.
@@ -109,10 +117,21 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   `source="blackmarble"` (NASA Black Marble VNP46A2 V002 daily
   gap-filled lunar BRDF-adjusted DNB radiance, 2012-01-19–present —
   `survey-currents` v0.9.0+) with an inspectable
-  `VizSpec.source_reason`. Whenever the parser pins a source it
+  `VizSpec.source_reason`. `bathymetry`/`elevation` always pin
+  `source="gebco"` (GEBCO 2024 global topography/bathymetry, 15
+  arc-second — `survey-currents` v0.10.0+) with an inspectable
+  `source_reason`. Whenever the parser pins a source it
   records `VizSpec.source_reason`, and
   `viz.sources.explain_source(spec)` explains any spec's routing
   (pinned, default, or refused).
+- **Basemap underlay** (new in v0.9.0): every render draws a GEBCO
+  tint/hillshade + Natural Earth coastlines beneath the variable map
+  (skipped tint for `bathymetry`/`elevation`, where GEBCO *is* the
+  variable). Lazy peer import, cached, and failure-tolerant — a
+  missing peer or failed download falls back to the plain background
+  and is recorded in `manifest["render"]["underlay"]`, never a crash.
+  `VizSpec.underlay` (default `True`) or `render_viz(...,
+  underlay=False)` controls it. See [docs/BASEMAPS.md](docs/BASEMAPS.md).
 - **Time**: `past N years`, `last N years`, `past N months`, `last summer`
   (most recent fully-completed Jun–Aug), `this year`, `2015 to 2020` /
   `2015-2020`, `since 2018`. **No time phrase → past 1 year.**
@@ -134,22 +153,33 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
   account); `night-lights` via Black Marble VNP46A2 V002 daily DNB
   radiance in any region (needs a free Earthdata Login) — all through
   `survey-currents`
-  (v0.9.0+ for Black Marble, v0.8.0+ for IMERG, v0.7.0+ for NSIDC). `chlorophyll`, `burn-scar`, `land-ice`, and `power-outage` still
+  (v0.10.0+ for GEBCO, v0.9.0+ for Black Marble, v0.8.0+ for IMERG,
+  v0.7.0+ for NSIDC). `bathymetry`/`elevation` via GEBCO 2024 in any
+  region (static compilation — keyless download, cached locally).
+  `chlorophyll`, `burn-scar`, `land-ice`, `power-outage`, and
+  `country-borders` still
   have no fetch adapter: they parse but raise a clear "no adapter yet"
   error (burn-scar's message points at survey-burn as the future
   adapter; land-ice's message explains glaciers / ice sheets / icebergs
   need a different product; power-outage's message explains outage
-  mapping is change detection, not a single-epoch map). See
+  mapping is change detection, not a single-epoch map;
+  country-borders' message explains Natural Earth vectors are an
+  underlay, not a variable). See
   `viz.sources.resolve_source()` and the `notes` field in
   `data/regions.yaml`.
-- The map panel is a plain `pcolormesh` over the region bbox — no coastlines
-  (no cartopy dependency, fully offline). Overlay contours (e.g. isobars)
-  are matplotlib contour lines drawn over the same panel.
+- The map panel is a plain `pcolormesh` over the region bbox (no cartopy
+  dependency, fully offline) with an optional GEBCO tint/hillshade +
+  Natural Earth coastline underlay (v0.9.0+, on by default). Overlay
+  contours (e.g. isobars) are matplotlib contour lines drawn over the
+  same panel.
 - Research/offline tool: synthetic demo data is clearly synthetic.
 
 ## Docs
 
 - [docs/PARSER.md](docs/PARSER.md) — the full deterministic grammar
+- [docs/BASEMAPS.md](docs/BASEMAPS.md) — the GEBCO + Natural Earth
+  basemap underlay, GEBCO-as-variable routing, and the
+  country-borders refusal
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module map and design decisions
 - [docs/INTEROP.md](docs/INTEROP.md) — how survey-currents / survey-animate /
   a future app plug in
