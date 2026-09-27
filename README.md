@@ -93,7 +93,14 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   (`survey-currents` v0.5.0+), `fire` anywhere → `firms` (NASA FIRMS
   active fires, needs a free FIRMS MAP_KEY — `survey-currents` v0.6.0+),
   `sea-ice` in polar regions → `nsidc` (NSIDC G02135 v4.0, keyless —
-  `survey-currents` v0.7.0+).
+  `survey-currents` v0.7.0+), `tp` with recent/observed/event wording →
+  `imerg` (NASA GPM IMERG V07 half-hourly precipitation, 2000–present,
+  needs a free Earthdata Login — `survey-currents` v0.8.0+), `tp` with
+  long-record wording → `era5` (see docs/PARSER.md §6a for the
+  observed-vs-reanalysis rule). Whenever the parser pins a source it
+  records `VizSpec.source_reason`, and
+  `viz.sources.explain_source(spec)` explains any spec's routing
+  (pinned, default, or refused).
 - **Time**: `past N years`, `last N years`, `past N months`, `last summer`
   (most recent fully-completed Jun–Aug), `this year`, `2015 to 2020` /
   `2015-2020`, `since 2018`. **No time phrase → past 1 year.**
@@ -105,13 +112,15 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
 ## Honest limitations
 
 - **Fetchable**: the 5 Great Lakes via GLSEA; other SST via OISST (default)
-  or MUR (high-resolution requests); `wind`/`msl`/`t2m`/`tp` via ERA5 in
-  any region (needs a free CDS account); `currents` via OSCAR (needs a
+  or MUR (high-resolution requests); `wind`/`msl`/`t2m` via ERA5 in
+  any region (needs a free CDS account); `tp` via ERA5 by default, or
+  via IMERG for recent/observed/event wording (needs a free Earthdata
+  Login); `currents` via OSCAR (needs a
   free Earthdata Login) except the Great Lakes; `fire` via FIRMS in any
   region (needs a free FIRMS MAP_KEY); `sea-ice` via NSIDC G02135 v4.0 in
   the polar regions (`arctic-ocean`, `southern-ocean` — keyless, no
   account) — all through `survey-currents`
-  (v0.7.0+ for NSIDC). `chlorophyll`, `burn-scar`, and `land-ice` still
+  (v0.8.0+ for IMERG, v0.7.0+ for NSIDC). `chlorophyll`, `burn-scar`, and `land-ice` still
   have no fetch adapter: they parse but raise a clear "no adapter yet"
   error (burn-scar's message points at survey-burn as the future
   adapter; land-ice's message explains glaciers / ice sheets / icebergs

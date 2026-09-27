@@ -187,6 +187,49 @@ HTTPS; `sea-ice` elsewhere, Great Lakes `currents`, `chlorophyll`,
 `burn-scar`, and `land-ice` have no adapter → `""`, and
 `is_fetchable` refuses them honestly).
 
+### 6a. Precipitation: observed (IMERG) vs reanalysis (ERA5)
+
+Precipitation (`variable="tp"`) is the one variable with two honest
+sources, and the parser chooses between them from the description:
+
+- **NASA GPM IMERG V07** (`source="imerg"`) — *satellite-observed*
+  precipitation: half-hourly, 0.1°, 2000–present, Early (~4 h) / Late
+  (~14 h) / Final (~3.5 months, gauge-adjusted) latency runs. This is
+  the right source for *what actually fell*: recent rain, a storm last
+  week, hurricane rainfall, an observed event.
+- **Copernicus ERA5** (`source="era5"`) — *reanalysis* precipitation:
+  hourly, 0.25°, 1940–present, model physics constrained by
+  observations. This is the right source for *climatology and trends*:
+  multi-decade rainfall trends, precipitation since 1980,
+  long-term climatology.
+
+Pinning order for `tp` (first match wins, word boundaries throughout):
+
+1. explicit `IMERG` → `imerg` ("explicit IMERG request");
+2. explicit `ERA5` → `era5` ("explicit ERA5 request");
+3. recent/observed/event wording — `recent`, `last week`, `event`,
+   `storm`, `hurricane`, `typhoon`, `cyclone`, `observed`,
+   `satellite`, `high resolution`, `ultra` → `imerg`;
+4. long-record wording — `trend`, `climatology`, `since 19…` /
+   `since 20…`, `decades`, `long-term` → `era5`;
+5. anything else → `source=""` → the regional default, `era5`.
+
+Whenever the parser pins a source it also records
+`VizSpec.source_reason` (a short human-readable justification, e.g.
+`"recent/observed precipitation wording -> NASA GPM IMERG V07"`).
+`viz.sources.explain_source(spec)` turns any spec — pinned, defaulted,
+or refused — into a one-line explanation ("source 'imerg' (NASA GPM
+IMERG V07): explicit IMERG request." / "source 'era5' (Copernicus ERA5
+(CDS)): regional default — 'tp' is an ERA5 reanalysis variable; the
+parser did not pin a source." / "no source: …").
+
+Note: descriptions *beginning* with "hurricane"/"storm" parse as the
+`(wind, overlays=["msl"])` storm combination (earliest keyword wins),
+so hurricane *rainfall* requests must put the rainfall keyword first
+("rainfall from the hurricane …"). And "recent decades" contains
+"recent" — it pins IMERG by rule 3; write "across the decades" for an
+ERA5 trend.
+
 Examples:
 
 - "High resolution North Atlantic sea surface temperature over the past
@@ -229,6 +272,22 @@ Examples:
 - "Antarctic ice sheet this year" → `variable="land-ice"` → honest
   refusal (glaciers / ice sheets / icebergs are a different physical
   product from sea-ice concentration — never routed to NSIDC)
+- "IMERG rainfall over the Gulf of Mexico last week" →
+  `variable="tp"`, `source="imerg"` ("explicit IMERG request")
+- "recent satellite rainfall over the Gulf of Mexico" →
+  `variable="tp"`, `source="imerg"` (recent/observed wording →
+  NASA GPM IMERG V07)
+- "rainfall from the hurricane over the Gulf of Mexico" →
+  `variable="tp"`, `source="imerg"` (event wording → IMERG; the
+  rainfall keyword must come first — a leading "hurricane" parses as
+  the wind+isobars storm combination)
+- "ERA5 precipitation over the Gulf of Mexico since 1980" →
+  `variable="tp"`, `source="era5"` ("explicit ERA5 request")
+- "precipitation climatology over the Gulf of Mexico" →
+  `variable="tp"`, `source="era5"` (long-record wording → ERA5
+  reanalysis, 1940–present)
+- "rainfall over the Gulf of Mexico" → `variable="tp"`, `source=""` →
+  resolves to `era5` (regional default; `explain_source` says so)
 
 ## 7. Failure mode
 

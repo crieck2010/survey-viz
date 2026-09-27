@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-27
+
+### Added
+- GPM IMERG precipitation source routing for the new survey-currents
+  v0.8.0 adapter (`KNOWN_SOURCES += ("imerg",)`): `VizSpec.source` may
+  now be `"imerg"` (NASA GPM IMERG V07 half-hourly precipitation,
+  2000–present, free Earthdata Login — lazily imported from
+  `currents.imerg.fetch_imerg`). Minimum survey-currents version for
+  `imerg` is 0.8.0 (honest upgrade message in `fetch_for_source`).
+- `VizSpec.source_reason: str = ""` — the parser records a short
+  human-readable justification whenever it pins a source (e.g.
+  `"explicit IMERG request"`, `"recent/observed precipitation wording
+  -> NASA GPM IMERG V07"`); `to_dict`/`from_dict` round-trip it, and
+  pre-v0.7.0 dicts without the key load with `""`.
+- `viz.sources.explain_source(spec) -> str` — a one-line explanation of
+  which adapter a spec resolves to, for every spec: pinned (quotes the
+  parser's reason), regional default, and honest refusals (no adapter).
+- Precipitation source selection (`variable == "tp"`): explicit `IMERG`
+  / `ERA5` pin that product; recent/observed/event wording (`recent`,
+  `last week`, `event`, `storm`, `hurricane`, `observed`, `satellite`,
+  `high resolution`, `ultra`) pins `"imerg"`; long-record wording
+  (`trend`, `climatology`, `since 19…`/`since 20…`, `decades`,
+  `long-term`) pins `"era5"`; unpinned `tp` keeps the regional default
+  `"era5"`. The observed-vs-reanalysis distinction is documented in
+  `docs/PARSER.md` (§6a). Existing MUR / CMEMS-currents pinning is
+  unchanged (the parser now records reasons for those pins too).
+
 ## [0.6.2] - 2026-09-26
 
 ### Fixed

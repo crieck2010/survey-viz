@@ -10,14 +10,14 @@ Peers (survey-currents, survey-animate) are optional and duck-typed —
 never hard imports, never hard dependencies.
 """
 
-__version__ = "0.6.2"
+__version__ = "0.7.0"
 
 from .gazetteer import find_region, get_region, is_fetchable, load_regions
 from .parser import UnparseableDescription, parse_description
 from .render import SCHEMA_ID, render_viz
 from .sources import (KNOWN_SOURCES, SOURCE_LABELS, default_source,
-                      fetch_for_source, is_fetchable as is_source_fetchable,
-                      resolve_source)
+                      explain_source, fetch_for_source,
+                      is_fetchable as is_source_fetchable, resolve_source)
 from .spec import VizSpec
 
 __all__ = [
@@ -34,6 +34,7 @@ __all__ = [
     "KNOWN_SOURCES",
     "SOURCE_LABELS",
     "default_source",
+    "explain_source",
     "resolve_source",
     "fetch_for_source",
     "is_source_fetchable",

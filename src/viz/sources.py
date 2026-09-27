@@ -9,11 +9,12 @@ actually resolved.
 Routing rules (documented in docs/PARSER.md):
 
 * ``spec.source`` set explicitly (``"glsea"`` / ``"oisst"`` / ``"mur"`` /
-  ``"era5"`` / ``"oscar"`` / ``"cmems-currents"``) always wins. The
-  deterministic parser pins ``"mur"`` when the description asks for
-  high resolution / ultra / coastal detail (SST only), and
-  ``"cmems-currents"`` when it asks for high resolution / ultra / 1 km
-  (currents only).
+  ``"era5"`` / ``"imerg"`` / ``"oscar"`` / ``"cmems-currents"``)
+  always wins. The deterministic parser pins ``"mur"`` when the
+  description asks for high resolution / ultra / coastal detail (SST
+  only), ``"cmems-currents"`` when it asks for high resolution /
+  ultra / 1 km (currents only), and ``"imerg"`` / ``"era5"`` for
+  precipitation (``"tp"``) requests as described above.
 * Otherwise the regional default applies: SST over one of the 5 Great
   Lakes -> ``"glsea"``; SST anywhere else -> ``"oisst"``;
   ``wind``/``msl``/``t2m``/``tp`` anywhere -> ``"era5"``; ``currents``
@@ -23,6 +24,15 @@ Routing rules (documented in docs/PARSER.md):
   global); ``sea-ice`` in the polar regions (``arctic-ocean``,
   ``southern-ocean``) -> ``"nsidc"`` (NSIDC G02135; sea ice elsewhere
   stays an honest refusal — the product has no mid-latitude ice domain).
+* ``"tp"`` may be *pinned* by the deterministic parser to ``"imerg"``
+  (NASA GPM IMERG V07) for explicit requests and recent / observed /
+  event wording (``recent``, ``last week``, ``event``, ``storm``,
+  ``hurricane``, ``observed``, ``satellite``, ``high resolution``,
+  ``ultra``), or to ``"era5"`` for explicit requests and long-record
+  wording (``trend``, ``climatology``, ``since 19…`` / ``since 20…``,
+  ``decades``, ``long-term``). Unpinned ``"tp"`` keeps the regional
+  default ``"era5"`` — the observed-vs-reanalysis distinction is
+  documented in docs/PARSER.md.
 * ``"chlorophyll"``, ``"burn-scar"``, and ``"land-ice"`` have no fetch
   adapter -> ``""`` (callers turn this into the honest "no adapter"
   refusal they already produce; burn-scar / burn-severity mapping belongs
@@ -38,6 +48,11 @@ Note: the ``"nsidc"`` adapter is ``currents.sea_ice.fetch_nsidc_sic`` —
 ``fetch_for_source("nsidc")`` returns the raw callable and callers pass
 ``(bbox, start, end, stride_days=...)`` positionally, like the
 global-SST adapters (hemisphere is auto-picked from the bbox).
+Note: the ``"imerg"`` adapter is ``currents.imerg.fetch_imerg`` —
+``fetch_for_source("imerg")`` returns the raw callable and callers pass
+``(bbox, start, end, accumulate=..., run=..., stride_days=...)``;
+reel-studio uses the ``fetch_imerg`` defaults (``accumulate="daily"``,
+``run="late"``).
 """
 
 from __future__ import annotations
@@ -52,6 +67,7 @@ __all__ = [
     "ERA5_VARIABLES",
     "default_source",
     "resolve_source",
+    "explain_source",
     "fetch_for_source",
     "is_fetchable",
 ]
@@ -66,6 +82,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "cmems-currents": "CMEMS Global Ocean Physics (daily)",
     "firms": "NASA FIRMS",
     "nsidc": "NSIDC Sea Ice Index (G02135 v4.0)",
+    "imerg": "NASA GPM IMERG V07",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -79,6 +96,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "cmems-currents": ("currents.currents_global", "fetch_cmems_currents"),
     "firms": ("currents.fires", "fetch_firms"),
     "nsidc": ("currents.sea_ice", "fetch_nsidc_sic"),
+    "imerg": ("currents.imerg", "fetch_imerg"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -92,6 +110,7 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "cmems-currents": "0.5.0",
     "firms": "0.6.0",
     "nsidc": "0.7.0",
+    "imerg": "0.8.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -167,6 +186,60 @@ def resolve_source(spec: Any) -> str:
         return explicit
     return default_source(getattr(spec, "variable", ""),
                           getattr(spec, "region_key", ""))
+
+
+def _explain_refusal(variable: str, region_key: str) -> str:
+    """Honest no-adapter message for a (variable, region)."""
+    if variable == "sea-ice":
+        return ("no source: the NSIDC Sea Ice Index (G02135) covers only "
+                "the polar regions — 'sea-ice' over "
+                f"{region_key!r} has no ice domain in the product and would "
+                "return an all-NaN field.")
+    if variable == "land-ice":
+        return ("no source: 'land-ice' (glaciers / ice sheets / icebergs) "
+                "is a different physical product from sea-ice concentration; "
+                "no land-ice adapter exists.")
+    if variable == "currents":
+        return ("no source: no lake-scale current adapter exists — "
+                f"'currents' over {region_key!r} is refused rather than "
+                "fetched from a global model that cannot resolve the lakes.")
+    if variable == "chlorophyll":
+        return "no source: no chlorophyll-a adapter exists yet."
+    if variable == "burn-scar":
+        return ("no source: burned-area / burn-severity mapping belongs to "
+                "survey-burn's future imagery adapter, not the FIRMS "
+                "active-fire detections.")
+    return f"no source: no fetch adapter exists for variable {variable!r}."
+
+
+def explain_source(spec: Any) -> str:
+    """Human-readable explanation of which adapter ``spec`` resolves to.
+
+    Covers every spec: pinned sources (the parser's
+    ``spec.source_reason`` is quoted when present), regional defaults,
+    and honest refusals (no adapter). ``spec`` is duck-typed like
+    :func:`resolve_source`.
+    """
+    variable = str(getattr(spec, "variable", "") or "")
+    region_key = str(getattr(spec, "region_key", "") or "")
+    source = resolve_source(spec)
+    if not source:
+        return _explain_refusal(variable, region_key)
+    label = SOURCE_LABELS.get(source, source)
+    reason = str(getattr(spec, "source_reason", "") or "").strip()
+    if reason:
+        return f"source {source!r} ({label}): {reason}."
+    default_why = {
+        "glsea": f"SST over the Great Lakes ({region_key})",
+        "oisst": f"SST outside the Great Lakes ({region_key})",
+        "era5": f"{variable!r} is an ERA5 reanalysis variable",
+        "oscar": f"surface currents outside the Great Lakes ({region_key})",
+        "firms": "active-fire detections are global in the FIRMS area API",
+        "nsidc": f"sea ice over the polar region {region_key}",
+        "imerg": "precipitation with no long-record wording",
+    }.get(source, f"variable {variable!r}")
+    return (f"source {source!r} ({label}): regional default — {default_why}; "
+            "the parser did not pin a source.")
 
 
 def fetch_for_source(source: str) -> Callable:

@@ -24,7 +24,7 @@ KNOWN_STYLES = ("reel-dark", "light")
 #: resolve the regional default at fetch time" (v0.1.0 specs have no
 #: source and keep working unchanged).
 KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5", "oscar", "cmems-currents",
-                 "firms", "nsidc")
+                 "firms", "nsidc", "imerg")
 #: Variables that may appear in ``VizSpec.overlays`` (drawn as contour
 #: overlays over the base variable, e.g. isobars over a wind map).
 KNOWN_OVERLAYS = ("wind", "msl", "t2m", "tp")
@@ -81,12 +81,21 @@ class VizSpec:
             from the full data range once, so the colormap never flickers
             between frames.
         source: SST fetch adapter pin — ``""`` (default, not pinned),
-            ``"glsea"``, ``"oisst"``, ``"mur"``, or ``"era5"``. Empty means
-            :func:`viz.sources.resolve_source` picks the regional default
-            at fetch time (Great Lakes SST -> GLSEA, other SST -> OISST,
-            wind/msl/t2m/tp -> ERA5). The deterministic parser sets
+            ``"glsea"``, ``"oisst"``, ``"mur"``, ``"era5"``, ``"imerg"``,
+            etc. Empty means :func:`viz.sources.resolve_source` picks the
+            regional default at fetch time (Great Lakes SST -> GLSEA,
+            other SST -> OISST, wind/msl/t2m/tp -> ERA5, tp may be pinned
+            to IMERG — see below). The deterministic parser sets
             ``"mur"`` when the description asks for high resolution /
-            ultra / coastal detail (SST only).
+            ultra / coastal detail (SST only), ``"cmems-currents"`` for
+            the same wording on currents, and ``"imerg"`` / ``"era5"``
+            for precipitation (``"tp"``) requests that name the product
+            explicitly or signal recent/observed vs long-record intent.
+        source_reason: human-readable reason the parser pinned
+            ``source`` (``""`` when the parser did not pin — the
+            regional default applies at fetch time). Recorded by the
+            parser whenever it pins a source; old spec dicts without
+            this key load with ``""``.
         overlays: optional contour overlays drawn over the base variable
             map, e.g. ``("msl",)`` for isobars over a wind field (the
             "storm" combination). Max ``MAX_OVERLAYS`` entries, each in
@@ -105,6 +114,7 @@ class VizSpec:
     vmin: Optional[float] = None
     vmax: Optional[float] = None
     source: str = ""
+    source_reason: str = ""
     overlays: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -145,6 +155,10 @@ class VizSpec:
             raise ValueError(
                 f"VizSpec.source: {self.source!r} not in {KNOWN_SOURCES} "
                 "(or empty for the regional default)")
+        if not isinstance(self.source_reason, str):
+            raise TypeError(
+                "VizSpec.source_reason: expected str, got "
+                f"{type(self.source_reason).__name__}")
         overlays = tuple(str(o).strip().lower() for o in self.overlays or ())
         for ov in overlays:
             if ov not in KNOWN_OVERLAYS:
@@ -175,6 +189,7 @@ class VizSpec:
             "vmin": self.vmin,
             "vmax": self.vmax,
             "source": self.source,
+            "source_reason": self.source_reason,
             "overlays": list(self.overlays),
         }
 
@@ -182,7 +197,8 @@ class VizSpec:
     def from_dict(cls, data: Dict[str, Any]) -> "VizSpec":
         """Rebuild from :meth:`to_dict` output (dates may be ISO strings).
 
-        v0.2.0 dicts without ``"overlays"`` load unchanged (default ``()``).
+        v0.2.0 dicts without ``"overlays"`` load unchanged (default ``()``);
+        dicts without ``"source_reason"`` (pre-v0.7.0) load with ``""``.
         """
         if not isinstance(data, dict):
             raise TypeError(f"VizSpec.from_dict: expected dict, got {type(data).__name__}")

@@ -291,19 +291,100 @@ _SOURCE_QUALITY_PATTERNS = [
 ]
 
 
-def _parse_source(text: str, variable: str) -> str:
-    """Return the pinned source (``"mur"`` / ``"cmems-currents"``) or
-    ``""`` for the default."""
+# --- precipitation source signals (variable == "tp" only) -------------------
+# Explicit product names win; otherwise recent/observed/event wording pins
+# "imerg" (NASA GPM IMERG V07 — satellite-observed, half-hourly,
+# 2000–present) and long-record/trend wording pins "era5" (Copernicus
+# ERA5 reanalysis, 1940–present). Anything else leaves the source empty
+# so viz.sources.resolve_source applies the regional default (tp ->
+# era5). Documented in docs/PARSER.md. All patterns use word boundaries
+# (or anchored prefixes like "since 19") and are checked in the order
+# listed by _first_match.
+_TP_IMERG_PATTERNS = [
+    r"\brecent\b",
+    r"\blast week\b",
+    r"\bevents?\b",
+    r"\bstorms?\b",
+    r"\bhurricanes?\b",
+    r"\btyphoons?\b",
+    r"\bcyclones?\b",
+    r"\bobserved\b",
+    r"\bsatellite\b",
+    r"high[ -]?resolution",
+    r"\bultra\b",
+]
+_TP_ERA5_PATTERNS = [
+    r"\btrend\b",
+    r"\bclimatolog\w*\b",
+    r"\bsince 19",
+    r"\bsince 20",
+    r"\bdecades?\b",
+    r"long[ -]?term",
+]
+
+
+def _first_match(lowered: str, patterns) -> Optional[str]:
+    """Return the first matching pattern string, or None."""
+    for p in patterns:
+        if re.search(p, lowered):
+            return p
+    return None
+
+
+def _parse_source(text: str, variable: str) -> Tuple[str, str]:
+    """Return ``(pinned source, reason)`` or ``("", "")`` for the default.
+
+    * ``"sst"`` + high-resolution / ultra / coastal-detail wording pins
+      ``"mur"`` (NASA JPL MUR v4.1, ~1 km).
+    * ``"currents"`` + the same wording pins ``"cmems-currents"`` (CMEMS
+      global ocean physics, 1/12°).
+    * ``"tp"`` (precipitation): an explicit ``IMERG`` / ``ERA5`` pins
+      that product; otherwise recent/observed/event wording
+      (``recent``, ``last week``, ``event``, ``storm``, ``hurricane``,
+      ``observed``, ``satellite``, ``high resolution``, ``ultra``) pins
+      ``"imerg"`` (NASA GPM IMERG V07 — satellite-observed,
+      half-hourly, 2000–present), while long-record wording (``trend``,
+      ``climatology``, ``since 19…`` / ``since 20…``, ``decades``,
+      ``long-term``) pins ``"era5"`` (Copernicus ERA5 reanalysis,
+      1940–present). Anything else leaves the source empty so
+      ``viz.sources.resolve_source`` applies the regional default
+      (``tp`` -> ``"era5"``).
+
+    The reason is always populated when a source is pinned (used for
+    ``VizSpec.source_reason``).
+    """
     lowered = text.lower()
     if variable == "sst":
-        if any(re.search(p, lowered) for p in _SOURCE_QUALITY_PATTERNS):
-            return "mur"
-        return ""
+        hit = _first_match(lowered, _SOURCE_QUALITY_PATTERNS)
+        if hit:
+            return ("mur",
+                    "high-resolution SST request "
+                    "-> NASA JPL MUR v4.1 (~1 km)")
+        return "", ""
     if variable == "currents":
-        if any(re.search(p, lowered) for p in _SOURCE_QUALITY_PATTERNS):
-            return "cmems-currents"
-        return ""
-    return ""
+        hit = _first_match(lowered, _SOURCE_QUALITY_PATTERNS)
+        if hit:
+            return ("cmems-currents",
+                    "high-resolution currents request "
+                    "-> CMEMS global ocean physics (1/12°)")
+        return "", ""
+    if variable == "tp":
+        if re.search(r"\bimerg\b", lowered):
+            return "imerg", "explicit IMERG request"
+        if re.search(r"\bera5\b", lowered):
+            return "era5", "explicit ERA5 request"
+        hit = _first_match(lowered, _TP_IMERG_PATTERNS)
+        if hit:
+            return ("imerg",
+                    "recent/observed precipitation wording "
+                    "-> NASA GPM IMERG V07")
+        hit = _first_match(lowered, _TP_ERA5_PATTERNS)
+        if hit:
+            return ("era5",
+                    "long-record precipitation wording "
+                    "-> Copernicus ERA5 reanalysis (1940-present)")
+        return "", ""
+    return "", ""
 
 
 def _derive_title(region_name: str, variable: str, start: _dt.date, end: _dt.date) -> str:
@@ -390,6 +471,7 @@ def parse_description(
     # Sea ice changes fast like fire: one frame per day, not one
     # representative day per month (v0.6.0; the NSIDC source is daily).
     cadence = "daily" if variable in ("fire", "sea-ice") else "monthly"
+    source, source_reason = _parse_source(normalized, variable)
     return VizSpec(
         title=spec_title,
         region_key=region["key"],
@@ -400,6 +482,7 @@ def parse_description(
         cadence=cadence,
         layout="reel-vertical",
         style="reel-dark",
-        source=_parse_source(normalized, variable),
+        source=source,
+        source_reason=source_reason,
         overlays=overlays,
     )
