@@ -184,8 +184,13 @@ including the 5 new fire regions: `california`, `pacific-northwest`,
 `sea-ice` in the polar regions (`arctic-ocean`, `southern-ocean`) →
 `nsidc` (NSIDC G02135 v4.0 — daily sea-ice concentration over keyless
 HTTPS; `sea-ice` elsewhere, Great Lakes `currents`, `chlorophyll`,
-`burn-scar`, and `land-ice` have no adapter → `""`, and
-`is_fetchable` refuses them honestly).
+`burn-scar`, `land-ice`, and `power-outage` have no adapter → `""`,
+and `is_fetchable` refuses them honestly).
+`night-lights` → `blackmarble` in any region (NASA Black Marble VNP46A2
+V002 daily gap-filled lunar BRDF-adjusted DNB radiance,
+2012-01-19–present, free Earthdata Login — the parser always pins it,
+with `source_reason="night-lights observations -> NASA Black Marble
+VNP46A2 daily corrected radiance"`).
 
 ### 6a. Precipitation: observed (IMERG) vs reanalysis (ERA5)
 
@@ -229,6 +234,46 @@ so hurricane *rainfall* requests must put the rainfall keyword first
 ("rainfall from the hurricane …"). And "recent decades" contains
 "recent" — it pins IMERG by rule 3; write "across the decades" for an
 ERA5 trend.
+
+### 6b. Night lights (Black Marble) vs power outages (honest refusal)
+
+Night lights (`variable="night-lights"`) always pin
+`source="blackmarble"`: **NASA Black Marble VNP46A2 V002** — daily
+gap-filled lunar BRDF-adjusted DNB radiance, 2012-01-19–present, free
+Earthdata Login (survey-currents v0.9.0+). Keywords: `night lights`,
+`city lights`, `urban lights`, `light pollution`, `electrification`,
+`development`, `growth of cities`, `Black Marble`, `VNP46A2`.
+Cadence is daily (one frame per day), like fire and sea ice.
+
+**Bare `development` wins the earliest-wins contest against later
+variable keywords** — "development of a hurricane" parses as
+`night-lights`, not the storm combination. In night-lights context
+this is the intended reading (urban development); in storm context,
+put the storm keyword first.
+
+"Power outage" / "blackout" is a *different variable*,
+`variable="power-outage"`, and it has **no fetch adapter** — the
+parser produces an honest refusal instead of a map. Outage mapping is
+temporal change detection across two or more epochs: a single daily
+Black Marble map cannot show a blackout, so routing blackout wording
+to the lights product would be a lie. Safety rule: `power-outage`
+wording *anywhere* in the text overrides a `night-lights` win
+("city lights during the blackout" → `power-outage`, refused —
+the change-detection reading is the honest one, the same way
+`burn-scar` wins ties against `fire`).
+
+- "City lights across California this year" →
+  `variable="night-lights"`, `source="blackmarble"`
+  ("night-lights observations -> NASA Black Marble VNP46A2 daily
+  corrected radiance"), cadence daily.
+- "Electrification across the Amazon Basin since 2019" →
+  `variable="night-lights"`, `source="blackmarble"`.
+- "Growth of cities in Southeast Australia over the past 5 years"
+  → `variable="night-lights"`, `source="blackmarble"`.
+- "Power outage in California last week" →
+  `variable="power-outage"`, no source — honest refusal
+  ("no source: 'power-outage' (blackout / power-outage mapping) is
+  temporal change detection across two or more epochs …").
 
 Examples:
 

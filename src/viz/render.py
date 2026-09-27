@@ -71,6 +71,12 @@ _VARIABLE_UNITS = {
     # carrying it degrades gracefully in messages).
     "fire": "detections",
     "burn-scar": "",
+    # NASA Black Marble night lights (survey-currents v0.9.0+, source
+    # "blackmarble"): daily DNB radiance ("power-outage" has no adapter
+    # and is never rendered — the unit is registered only so a spec
+    # carrying it degrades gracefully in messages).
+    "night-lights": "nW/cm²/sr",
+    "power-outage": "",
 }
 
 #: Contour defaults per overlay variable: contour every ``step`` units,

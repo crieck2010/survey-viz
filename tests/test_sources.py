@@ -125,7 +125,7 @@ def test_package_exports():
                  "is_source_fetchable", "KNOWN_SOURCES", "SOURCE_LABELS"):
         assert name in viz.__all__
         assert hasattr(viz, name)
-    assert viz.__version__ == "0.7.0"
+    assert viz.__version__ == "0.8.0"
 
 
 # ---------------------------------------------------------------------------

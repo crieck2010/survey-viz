@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-27
+
+### Added
+- NASA Black Marble night-lights routing (`KNOWN_VARIABLES +=
+  ("night-lights", "power-outage")`, `KNOWN_SOURCES += ("blackmarble",)`):
+  - `variable="night-lights"` (keywords: `night lights`, `city lights`,
+    `urban lights`, `light pollution`, `electrification`, `development`,
+    `growth of cities`, `Black Marble`, `VNP46A2`) always pins
+    `source="blackmarble"` — NASA Black Marble VNP46A2 V002 daily
+    gap-filled lunar BRDF-adjusted DNB radiance, 2012-01-19–present,
+    free Earthdata Login — with an inspectable `VizSpec.source_reason`
+    ("night-lights observations -> NASA Black Marble VNP46A2 daily
+    corrected radiance"). Regional default is `blackmarble` in any
+    region; daily cadence; lazily imported from
+    `currents.blackmarble.fetch_blackmarble` (minimum survey-currents
+    0.9.0, honest upgrade message in `fetch_for_source`).
+  - `variable="power-outage"` (`power outage(s)`, `blackout(s)`) parses
+    but has **no fetch adapter**: outage mapping is temporal change
+    detection across two or more epochs, and a single daily Black
+    Marble map cannot show it — `explain_source` returns an honest
+    refusal. Safety rule: blackout wording anywhere in the text
+    overrides a `night-lights` win (like `burn-scar` winning ties
+    against `fire`), so it is never silently misrendered.
+  - `_VARIABLE_UNITS["night-lights"] = "nW/cm²/sr"` (render labels);
+    `SOURCE_LABELS["blackmarble"] = "NASA Black Marble VNP46A2"`.
+- `docs/PARSER.md` §6b documents the night-lights pinning, the daily
+  cadence, the bare-`development` earliest-wins caveat, and the
+  power-outage refusal rule with examples.
+- 29 new tests (`tests/test_blackmarble_routing.py`), fully offline.
+  250 passed.
+
 ## [0.7.0] - 2026-09-27
 
 ### Added

@@ -33,12 +33,17 @@ Routing rules (documented in docs/PARSER.md):
   ``decades``, ``long-term``). Unpinned ``"tp"`` keeps the regional
   default ``"era5"`` — the observed-vs-reanalysis distinction is
   documented in docs/PARSER.md.
-* ``"chlorophyll"``, ``"burn-scar"``, and ``"land-ice"`` have no fetch
-  adapter -> ``""`` (callers turn this into the honest "no adapter"
-  refusal they already produce; burn-scar / burn-severity mapping belongs
-  to survey-burn's future imagery adapter, not FIRMS; glaciers / ice
-  sheets / icebergs are a different physical product from sea-ice
-  concentration, not NSIDC).
+* ``"night-lights"`` anywhere -> ``"blackmarble"`` (NASA Black Marble
+  VNP46A2 V002 daily, pinned by the parser with an inspectable
+  ``source_reason``). ``"power-outage"`` (blackout / power-outage
+  wording) has no adapter -> ``""``: outage mapping is temporal
+  change detection, and a single-epoch lights map would be a lie.
+* ``"chlorophyll"``, ``"burn-scar"``, ``"land-ice"``, and
+  ``"power-outage"`` have no fetch adapter -> ``""`` (callers turn this
+  into the honest "no adapter" refusal they already produce;
+  burn-scar / burn-severity mapping belongs to survey-burn's future
+  imagery adapter, not FIRMS; glaciers / ice sheets / icebergs are a
+  different physical product from sea-ice concentration, not NSIDC).
 
 Note: the ``"era5"`` adapter is ``currents.era5.fetch_era5``, whose first
 argument is the variable list — ``fetch_for_source("era5")`` returns the
@@ -53,6 +58,11 @@ Note: the ``"imerg"`` adapter is ``currents.imerg.fetch_imerg`` —
 ``(bbox, start, end, accumulate=..., run=..., stride_days=...)``;
 reel-studio uses the ``fetch_imerg`` defaults (``accumulate="daily"``,
 ``run="late"``).
+Note: the ``"blackmarble"`` adapter is
+``currents.blackmarble.fetch_blackmarble`` —
+``fetch_for_source("blackmarble")`` returns the raw callable and
+callers pass ``(bbox, start, end, product="daily", stride_days=...,
+resolution=...)`` positionally.
 """
 
 from __future__ import annotations
@@ -83,6 +93,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "firms": "NASA FIRMS",
     "nsidc": "NSIDC Sea Ice Index (G02135 v4.0)",
     "imerg": "NASA GPM IMERG V07",
+    "blackmarble": "NASA Black Marble VNP46A2",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -97,6 +108,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "firms": ("currents.fires", "fetch_firms"),
     "nsidc": ("currents.sea_ice", "fetch_nsidc_sic"),
     "imerg": ("currents.imerg", "fetch_imerg"),
+    "blackmarble": ("currents.blackmarble", "fetch_blackmarble"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -111,6 +123,7 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "firms": "0.6.0",
     "nsidc": "0.7.0",
     "imerg": "0.8.0",
+    "blackmarble": "0.9.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -167,6 +180,12 @@ def default_source(variable: str, region_key: str) -> str:
     # "land-ice" (glaciers / ice sheets / icebergs) has no adapter: land
     # ice is a different physical product from sea-ice concentration,
     # and routing it to NSIDC would be a lie.
+    if variable == "night-lights":
+        return "blackmarble"
+    # "power-outage" (blackout / power-outage wording) has no adapter:
+    # outage mapping is temporal change detection across two or more
+    # epochs, and a single daily Black Marble map cannot show it — so
+    # it is refused rather than misrendered.
     return ""
 
 
@@ -209,6 +228,11 @@ def _explain_refusal(variable: str, region_key: str) -> str:
         return ("no source: burned-area / burn-severity mapping belongs to "
                 "survey-burn's future imagery adapter, not the FIRMS "
                 "active-fire detections.")
+    if variable == "power-outage":
+        return ("no source: 'power-outage' (blackout / power-outage mapping) "
+                "is temporal change detection across two or more epochs — "
+                "a single daily Black Marble night-lights map cannot show "
+                "it, so it is refused rather than misrendered.")
     return f"no source: no fetch adapter exists for variable {variable!r}."
 
 
@@ -237,6 +261,8 @@ def explain_source(spec: Any) -> str:
         "firms": "active-fire detections are global in the FIRMS area API",
         "nsidc": f"sea ice over the polar region {region_key}",
         "imerg": "precipitation with no long-record wording",
+        "blackmarble": ("night-lights observations -> NASA Black Marble "
+                        "VNP46A2 daily corrected radiance"),
     }.get(source, f"variable {variable!r}")
     return (f"source {source!r} ({label}): regional default — {default_why}; "
             "the parser did not pin a source.")

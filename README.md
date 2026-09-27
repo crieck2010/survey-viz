@@ -79,7 +79,15 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   daily sea-ice concentration, polar regions only);
   **glacier(s)/ice sheet(s)/iceberg(s)/land ice** → `land-ice` (parses,
   but has no fetch adapter — honest refusal; land ice is a different
-  physical product from sea ice). Earliest keyword in the
+  physical product from sea ice). **night light(s)/city light(s)/urban
+  light(s)/light pollution/electrification/development/growth of
+  cities/Black Marble** → `night-lights` (NASA Black Marble VNP46A2
+  V002 daily DNB radiance, 2012–present, free Earthdata Login —
+  `survey-currents` v0.9.0+); **power outage(s)/blackout(s)** →
+  `power-outage` (parses, but has no fetch adapter — honest refusal:
+  outage mapping is temporal change detection, not a single-epoch
+  lights map; blackout wording anywhere overrides a `night-lights`
+  win so it is never silently misrendered). Earliest keyword in the
   text wins (`burn-scar` wins ties against `fire`, `land-ice` wins ties
   against `sea-ice`); **no keyword → `sst`**.
   **Storms** (`storm/cyclone/hurricane/typhoon`) → `wind` + pressure-isobar overlay.
@@ -97,7 +105,11 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   `imerg` (NASA GPM IMERG V07 half-hourly precipitation, 2000–present,
   needs a free Earthdata Login — `survey-currents` v0.8.0+), `tp` with
   long-record wording → `era5` (see docs/PARSER.md §6a for the
-  observed-vs-reanalysis rule). Whenever the parser pins a source it
+  observed-vs-reanalysis rule). `night-lights` always pins
+  `source="blackmarble"` (NASA Black Marble VNP46A2 V002 daily
+  gap-filled lunar BRDF-adjusted DNB radiance, 2012-01-19–present —
+  `survey-currents` v0.9.0+) with an inspectable
+  `VizSpec.source_reason`. Whenever the parser pins a source it
   records `VizSpec.source_reason`, and
   `viz.sources.explain_source(spec)` explains any spec's routing
   (pinned, default, or refused).
@@ -119,12 +131,15 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
   free Earthdata Login) except the Great Lakes; `fire` via FIRMS in any
   region (needs a free FIRMS MAP_KEY); `sea-ice` via NSIDC G02135 v4.0 in
   the polar regions (`arctic-ocean`, `southern-ocean` — keyless, no
-  account) — all through `survey-currents`
-  (v0.8.0+ for IMERG, v0.7.0+ for NSIDC). `chlorophyll`, `burn-scar`, and `land-ice` still
+  account); `night-lights` via Black Marble VNP46A2 V002 daily DNB
+  radiance in any region (needs a free Earthdata Login) — all through
+  `survey-currents`
+  (v0.9.0+ for Black Marble, v0.8.0+ for IMERG, v0.7.0+ for NSIDC). `chlorophyll`, `burn-scar`, `land-ice`, and `power-outage` still
   have no fetch adapter: they parse but raise a clear "no adapter yet"
   error (burn-scar's message points at survey-burn as the future
   adapter; land-ice's message explains glaciers / ice sheets / icebergs
-  need a different product). See
+  need a different product; power-outage's message explains outage
+  mapping is change detection, not a single-epoch map). See
   `viz.sources.resolve_source()` and the `notes` field in
   `data/regions.yaml`.
 - The map panel is a plain `pcolormesh` over the region bbox — no coastlines

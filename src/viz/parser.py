@@ -123,6 +123,29 @@ _VARIABLE_PATTERNS = {
         r"\bdeluges?\b",
         r"\bdownpours?\b",
     ],
+    # "power-outage" is listed BEFORE "night-lights" so it wins ties the
+    # same way "burn-scar" wins ties against "fire": a blackout is
+    # temporal change detection across two or more epochs, and the
+    # change-detection reading is the honest one — it has no fetch
+    # adapter, only a refusal (see viz.sources.default_source).
+    "power-outage": [
+        r"\bpower[ -]?outages?\b",
+        r"\bblackouts?\b",
+    ],
+    "night-lights": [
+        r"\bblack marble\b",
+        r"\bvnp46a2?\b",
+        r"night[ -]?lights?",
+        r"city[ -]?lights?",
+        r"urban[ -]?lights?",
+        r"light[ -]?pollution",
+        r"\belectrification\b",
+        r"\bgrowth\s+of\s+cit(?:y|ies)\b",
+        # Bare "development" almost always means urban development in
+        # this context; caveat: it wins the earliest-wins contest
+        # against later variable keywords (documented in docs/PARSER.md).
+        r"\bdevelopment\b",
+    ],
 }
 
 # Storm keywords: they name the ("wind", overlays=["msl"]) combination
@@ -147,6 +170,8 @@ _VARIABLE_LABELS = {
     "burn-scar": "Burn Scar",
     "sea-ice": "Sea Ice",
     "land-ice": "Land Ice",
+    "night-lights": "Night Lights",
+    "power-outage": "Power Outage",
 }
 
 # --- time phrases ------------------------------------------------------------
@@ -252,7 +277,10 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool]:
 
     Earliest keyword in the text wins; storm keywords ("storm",
     "cyclone", "hurricane", "typhoon") compete in the same race and
-    map to the ("wind", overlays=("msl",)) combination. No keyword ->
+    map to the ("wind", overlays=("msl",)) combination. Safety rule
+    (v0.8.0): "power-outage" wording anywhere in the text overrides a
+    "night-lights" win — outage mapping is temporal change detection
+    and a single-epoch Black Marble map would be a lie. No keyword ->
     ("sst", (), True).
     """
     lowered = text.lower()
@@ -269,7 +297,16 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool]:
     if best is None:
         # Documented default rule: no variable keyword -> sst.
         return "sst", (), True
-    return best[1], best[2], False
+    variable = best[1]
+    if variable == "night-lights" and any(
+            re.search(p, lowered)
+            for p in _VARIABLE_PATTERNS["power-outage"]):
+        # Safety rule (v0.8.0): blackout / power-outage wording anywhere
+        # overrides a night-lights win — outage mapping is temporal
+        # change detection, and a single daily Black Marble map would be
+        # a lie. Documented in docs/PARSER.md.
+        return "power-outage", (), False
+    return variable, best[2], False
 
 
 # --- source-quality keywords ---------------------------------------------------
@@ -349,6 +386,10 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
       1940–present). Anything else leaves the source empty so
       ``viz.sources.resolve_source`` applies the regional default
       (``tp`` -> ``"era5"``).
+    * ``"night-lights"`` always pins ``"blackmarble"`` (NASA Black
+      Marble VNP46A2 V002 daily, gap-filled lunar BRDF-adjusted DNB
+      radiance, 2012-01-19–present) with an inspectable
+      ``source_reason``.
 
     The reason is always populated when a source is pinned (used for
     ``VizSpec.source_reason``).
@@ -384,6 +425,10 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
                     "long-record precipitation wording "
                     "-> Copernicus ERA5 reanalysis (1940-present)")
         return "", ""
+    if variable == "night-lights":
+        return ("blackmarble",
+                "night-lights observations -> "
+                "NASA Black Marble VNP46A2 daily corrected radiance")
     return "", ""
 
 
@@ -468,9 +513,11 @@ def parse_description(
         default_time = True
 
     spec_title = title or _derive_title(region["name"], variable, start, end)
-    # Sea ice changes fast like fire: one frame per day, not one
-    # representative day per month (v0.6.0; the NSIDC source is daily).
-    cadence = "daily" if variable in ("fire", "sea-ice") else "monthly"
+    # Sea ice and night lights change fast like fire: one frame per day,
+    # not one representative day per month (v0.6.0 for sea ice; v0.8.0
+    # for night lights — the Black Marble source is daily).
+    cadence = "daily" if variable in ("fire", "sea-ice", "night-lights") \
+        else "monthly"
     source, source_reason = _parse_source(normalized, variable)
     return VizSpec(
         title=spec_title,
