@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-09-27
+
+### Added
+- Ocean color (`KNOWN_VARIABLES += ("ocean-color",)`, source
+  `"oceancolor"`; minimum peer `survey-currents >= 0.14.0`):
+  - The legacy `chlorophyll` variable name canonicalizes to
+    `ocean-color` through `VizSpec` (old serialized specs without
+    `context`, and old `variable="chlorophyll"` specs, stay loadable).
+  - `VizSpec.context` (separate from contour overlays): `currents`
+    and `sst` companion datasets (bloom + currents wording →
+    `context=("currents",)`; chlorophyll-vs-temperature / SST wording →
+    `context=("sst",)`; both may coexist).
+  - Parser: ocean color / chlorophyll / chl / phytoplankton / algae /
+    algal / bloom / green ocean → `ocean-color`; monthly default,
+    explicit daily wording → daily; terrestrial nitrate / turbidity /
+    dissolved oxygen / "water quality" requests are refused honestly
+    (no adapter) rather than silently mapped to SST.
+  - Source: NOAA CoastWatch ERDDAP MODIS Aqua R2022 Level-3
+    chlorophyll-a (monthly default, ~4 km, 2002-present, keyless) with
+    the required credentials-gated NASA OBPG fallback (free Earthdata
+    Login) behind `source="auto"`; ESA OC-CCI v6.0 and VIIRS SNPP
+    sensors selectable at fetch time. The parser pins this source
+    with an inspectable `source_reason`.
+  - Log-scaled renderer (`matplotlib.colors.LogNorm`, viridis,
+    mg/m³): masked arrays convert to NaN without dropping masks;
+    partial cloud gaps stay NaN over the basemap; fully cloudy frames
+    render an explicit **NO OCEAN COLOR OBSERVATION** panel (never
+    filled/interpolated). Manifest records `log_scale`,
+    `gap_frames`, and `context`; the footer notes log scale, gap
+    count, and context.
+  - Docs: new docs/OCEANCOLOR.md (parsing, rendering, gaps, context,
+    coastal/inland case-2 limitations); docs/PARSER.md (§2, source
+    pinning) and README updated. Coastal/inland retrievals are
+    indicative only — the global L3 grid covers the Great Lakes
+    geometrically, but land adjacency / bottom reflectance / CDOM /
+    suspended sediment make values non-quantitative there.
+
 ## [0.12.0] - 2026-09-27
 
 ### Added

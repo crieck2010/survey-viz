@@ -75,7 +75,12 @@ _VARIABLE_PATTERNS = {
         r"drift",
         r"\bedd(?:y|ies)\b",
     ],
-    "chlorophyll": [
+    "ocean-color": [
+        # Canonical since v0.13.0 (was "chlorophyll"). Generic "green
+        # ocean" wording routes HERE — never to a terrestrial water
+        # product (documented in docs/OCEANCOLOR.md).
+        r"ocean\s*colou?r",
+        r"green\s*oceans?",
         r"chlorophyll",
         r"\bchl\b",
         r"algae",
@@ -293,6 +298,51 @@ _WATER_CONTEXT_PATTERNS = {
            r"\bagainst\s+(?:rain|rainfall|precipitation)\b"],
 }
 
+# --- ocean-color context (survey-currents v0.14.0+, source "oceancolor")
+# "Phytoplankton bloom with ocean currents" -> ocean-color base +
+# "currents" context; "bloom conditions" / "chlorophyll vs temperature"
+# -> ocean-color base + "sst" context. Context is fetched alongside the
+# base variable (see VizSpec.context) — it is NOT drawn as contours on
+# the chlorophyll map. At most MAX_CONTEXTS entries (spec.py).
+_OCEANCOLOR_CURRENTS_PATTERNS = [
+    r"\bcurrents?\b",
+    r"\bcirculation\b",
+    r"\bdrift\b",
+    r"\bedd(?:y|ies)\b",
+]
+_OCEANCOLOR_SST_PATTERNS = [
+    r"\bbloom\s+conditions\b",
+    r"\bconditions?\b.{0,20}\bblooms?\b",
+    r"\bvs\.?\s+(?:sea\s+)?surface\s+temperatures?\b",
+    r"\bvs\.?\s+temperatures?\b",
+    r"\btemperatures?\s+vs\.?\b",
+    r"\bsea\s+surface\s+temperatures?\b",
+    r"\bsst\b",
+]
+
+#: Terrestrial water-quality wording with NO ocean-color adapter behind
+#: it (nitrate, turbidity, "water quality", dissolved oxygen, ...).
+#: When these match and no variable keyword won the race, the request
+#: is refused honestly instead of defaulting to SST (documented in
+#: docs/OCEANCOLOR.md). Chlorophyll / algae / bloom wording is NOT in
+#: this list — that is the ocean-color variable.
+_TERRESTRIAL_WQ_PATTERNS = [
+    r"\bwater\s+quality\b",
+    r"\bnitrates?\b",
+    r"\bnitrites?\b",
+    r"\bphosphates?\b",
+    r"\bphosphorus\b",
+    r"\bturbidity\b",
+    r"\bturbid\b",
+    r"\bdissolved\s+oxygen\b",
+    r"\bdo\s+levels?\b",
+    r"\bpollutants?\b",
+    r"\bcontamination\b",
+    r"\be\.?\s?coli\b",
+    r"\bph\s+levels?\b",
+    r"\bacidity\b",
+]
+
 # --- streamflow intent (survey-currents v0.13.0+, source "usgs") ------------
 # Explicit streamflow phrases: "streamflow", "river discharge", "stream
 # discharge", "river flow", "gage"/"gages", "streamgage"/"streamgages".
@@ -353,6 +403,7 @@ def _parse_streamflow_request(text: str) -> Optional[Tuple[str, Tuple[str, ...]]
 _VARIABLE_LABELS = {
     "sst": "Surface Water Temperature",
     "currents": "Surface Currents",
+    "ocean-color": "Chlorophyll-a (Ocean Color)",
     "chlorophyll": "Chlorophyll-a",
     "wind": "10-m Wind",
     "msl": "Sea-Level Pressure",
@@ -522,9 +573,10 @@ def _parse_storm_request(text: str) -> Optional[Tuple[str, str, Optional[int]]]:
 
 
 def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
-                                        str, str, Optional[int]]:
+                                        str, str, Optional[int],
+                                        Tuple[str, ...]]:
     """Return (variable, overlays, defaulted, storm_name, storm_rank,
-    storm_top_n).
+    storm_top_n, context).
 
     Storm track/identity/ranking intent (see :func:`_parse_storm_request`)
     is detected FIRST: a named storm, track wording, or "strongest ..."
@@ -537,7 +589,7 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
     wording anywhere in the text overrides a "night-lights" win —
     outage mapping is temporal change detection and a single-epoch
     Black Marble map would be a lie. No keyword ->
-    ("sst", (), True, "", "", None).
+    ("sst", (), True, "", "", None, ()).
 
     Streamflow intent (see :func:`_parse_streamflow_request`) is
     detected BEFORE storm intent: explicit streamflow phrasing
@@ -560,6 +612,14 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
     On a ``"streamflow"`` win, rainfall wording ("after heavy
     rainfall", "with rainfall", ...) adds the same ``"tp"`` overlay —
     the gage markers stay the base layer and precipitation is context.
+
+    On an ``"ocean-color"`` win (v0.13.0), currents wording ("with
+    ocean currents", "circulation", "drift", "eddy/eddies") adds the
+    ``"currents"`` context and SST wording ("bloom conditions",
+    "chlorophyll vs temperature", "sea surface temperature", "sst")
+    adds the ``"sst"`` context — fetched alongside the chlorophyll-a
+    base map, recorded in provenance, never drawn as contours on it
+    (see docs/OCEANCOLOR.md).
     """
     lowered = text.lower()
     # Streamflow intent wins before everything else: explicit
@@ -569,7 +629,7 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
     streamflow_req = _parse_streamflow_request(text)
     if streamflow_req is not None:
         return (streamflow_req[0], streamflow_req[1], False,
-                "", "", None)
+                "", "", None, ())
     storm_req = _parse_storm_request(text)
     if storm_req is not None:
         storm_name, storm_rank, storm_top_n = storm_req
@@ -578,7 +638,7 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
             if any(re.search(p, lowered) for p in patterns):
                 overlays = (ov_name,)
                 break
-        return "storm-tracks", overlays, False, storm_name, storm_rank, storm_top_n
+        return "storm-tracks", overlays, False, storm_name, storm_rank, storm_top_n, ()
     best: Optional[Tuple[int, str, Tuple[str, ...]]] = None
     for variable, patterns in _VARIABLE_PATTERNS.items():
         for pattern in patterns:
@@ -591,7 +651,7 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
             best = (m.start(), "wind", ("msl",))
     if best is None:
         # Documented default rule: no variable keyword -> sst.
-        return "sst", (), True, "", "", None
+        return "sst", (), True, "", "", None, ()
     variable = best[1]
     if variable == "night-lights" and any(
             re.search(p, lowered)
@@ -600,7 +660,7 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
         # overrides a night-lights win — outage mapping is temporal
         # change detection, and a single daily Black Marble map would be
         # a lie. Documented in docs/PARSER.md.
-        return "power-outage", (), False, "", "", None
+        return "power-outage", (), False, "", "", None, ()
     if variable == "water-storage":
         # "groundwater decline vs rainfall": keep GRACE as the base map
         # and add precipitation as a contour overlay (the pipeline
@@ -608,8 +668,16 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
         # status when unavailable). Documented in docs/PARSER.md.
         for ov_name, patterns in _WATER_CONTEXT_PATTERNS.items():
             if any(re.search(p, lowered) for p in patterns):
-                return "water-storage", (ov_name,), False, "", "", None
-    return variable, best[2], False, "", "", None
+                return "water-storage", (ov_name,), False, "", "", None, ()
+    context: Tuple[str, ...] = ()
+    if variable == "ocean-color":
+        ctx: List[str] = []
+        if any(re.search(p, lowered) for p in _OCEANCOLOR_CURRENTS_PATTERNS):
+            ctx.append("currents")
+        if any(re.search(p, lowered) for p in _OCEANCOLOR_SST_PATTERNS):
+            ctx.append("sst")
+        context = tuple(ctx)
+    return variable, best[2], False, "", "", None, context
 
 
 # --- source-quality keywords ---------------------------------------------------
@@ -708,6 +776,13 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
       keyless HTTPS, US-only) with an inspectable ``source_reason``
       — in every region; bboxes outside USGS coverage yield an honest
       empty field, rendered as an explicit empty-frame message.
+    * ``"ocean-color"`` always pins ``"oceancolor"`` (NOAA CoastWatch
+      ERDDAP: MODIS Aqua R2022 Level-3 chlorophyll-a, monthly, ~4 km,
+      2002-present, keyless) with an inspectable ``source_reason``
+      — in every region; the global L3 grid covers the Great Lakes
+      geometrically, but inland/coastal retrievals are indicative
+      only (case-2 waters: land adjacency, bottom reflectance, CDOM,
+      suspended sediment — see docs/OCEANCOLOR.md).
 
     The reason is always populated when a source is pinned (used for
     ``VizSpec.source_reason``).
@@ -765,6 +840,11 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
                 "streamflow / river-discharge description -> "
                 "USGS Water Services (NWIS) streamgage daily values "
                 "(daily MEAN discharge, keyless, US-only)")
+    if variable == "ocean-color":
+        return ("oceancolor",
+                "chlorophyll-a / ocean color description -> "
+                "NOAA CoastWatch ERDDAP (MODIS Aqua R2022, "
+                "monthly L3 chlorophyll-a, ~4 km, 2002-present, keyless)")
     return "", ""
 
 
@@ -835,12 +915,32 @@ def parse_description(
 
     region = find_region(normalized)
     (variable, overlays, variable_defaulted,
-     storm_name, storm_rank, storm_top_n) = _parse_variable(normalized)
+     storm_name, storm_rank, storm_top_n, context) = _parse_variable(normalized)
     start, end, time_phrases = _parse_time(normalized, today)
 
     if region is None:
         raise UnparseableDescription(
             _failure_message(normalized, region, variable, variable_defaulted, time_phrases, False)
+        )
+
+    # Honest refusal (v0.13.0): terrestrial water-quality wording
+    # (nitrate, turbidity, "water quality", ...) with no variable
+    # keyword is refused instead of defaulting to SST — there is no
+    # water-quality adapter, and answering with a temperature map would
+    # be a lie. Chlorophyll / algae / bloom wording is the ocean-color
+    # variable, not this guard (documented in docs/OCEANCOLOR.md).
+    if variable_defaulted and any(
+            re.search(p, normalized.lower())
+            for p in _TERRESTRIAL_WQ_PATTERNS):
+        raise UnparseableDescription(
+            "No water-quality adapter: this request asks about a "
+            "terrestrial water-quality parameter (nitrate, turbidity, "
+            "\"water quality\", ...) for which no fetch adapter exists. "
+            "The only water-quality-adjacent product is ocean color "
+            "(chlorophyll-a from satellite ocean color) — ask about "
+            "\"chlorophyll\", \"algae bloom\", or \"phytoplankton\" "
+            "instead.\n"
+            "Examples that DO parse:\n" + "\n".join(f"  - {e}" for e in _EXAMPLES)
         )
 
     default_time = False
@@ -860,13 +960,18 @@ def parse_description(
     # cumulatively (v0.10.0). Water storage is a monthly product: GRACE
     # always renders one frame per month (v0.11.0). Streamflow is a
     # daily product: USGS daily values render one frame per day
-    # (v0.12.0).
+    # (v0.12.0). Ocean color is a monthly product by default (the most
+    # cloud-complete composite); explicit "daily" wording requests the
+    # daily L3 product instead (v0.13.0).
     if variable in ("bathymetry", "elevation"):
         cadence = "yearly"
         if default_time:
             start = end = today
     elif variable == "water-storage":
         cadence = "monthly"
+    elif variable == "ocean-color" and re.search(
+            r"\bdaily\b", normalized.lower()):
+        cadence = "daily"
     else:
         cadence = "daily" if variable in ("fire", "sea-ice", "night-lights",
                                           "storm-tracks", "streamflow") else "monthly"
@@ -884,6 +989,7 @@ def parse_description(
         source=source,
         source_reason=source_reason,
         overlays=overlays,
+        context=context,
         storm_name=storm_name,
         storm_rank=storm_rank,
         storm_top_n=storm_top_n,

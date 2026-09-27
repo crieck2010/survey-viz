@@ -75,6 +75,10 @@ _STYLE = {
 _VARIABLE_UNITS = {
     "sst": "°C",
     "currents": "m/s",
+    # Ocean color (survey-currents v0.14.0+, source "oceancolor"):
+    # chlorophyll-a in mg/m³, rendered on a log scale ("chlorophyll"
+    # is the legacy variable alias — same unit, same rendering).
+    "ocean-color": "mg/m³",
     "chlorophyll": "mg/m³",
     # ERA5 variables (survey-currents v0.4.0+, source "era5").
     "wind": "m/s",
@@ -121,6 +125,11 @@ _VARIABLE_UNITS = {
 _VARIABLE_CMAPS = {
     "bathymetry": "Blues_r",   # deep = dark blue
     "elevation": "terrain",
+    # Chlorophyll-a: viridis on a LogNorm scale (see the ocean-color
+    # branch in render_viz) — readable on both dark and light styles,
+    # and perceptually uniform across the log decades.
+    "ocean-color": "viridis",
+    "chlorophyll": "viridis",  # legacy alias, same rendering
     # Diverging anomaly colormap for GRACE TWS: brown = drier than the
     # 2004–2009 mean, blue = wetter; the scale is always centered on
     # zero (see the vmin/vmax block in render_viz).
@@ -221,13 +230,21 @@ def _normalize_field(field: Any) -> Tuple[List[_dt.date], Any, Any, Any]:
             if hasattr(field, attr):
                 arr = getattr(field, attr)
                 if arr is not None and np.ndim(arr) == 3:
-                    values = np.asarray(arr, dtype=float)
+                    # Masked cells (land / cloud / missing) become NaN so
+                    # they stay out of the color scale and the map —
+                    # np.asarray alone would silently DROP the mask and
+                    # render masked cells as data (never acceptable for
+                    # cloud gaps in ocean color).
+                    values = np.ma.filled(np.ma.asanyarray(arr, dtype=float),
+                                          np.nan)
                     break
         if values is None:
             for method in _GRID_METHODS:
                 if callable(getattr(field, method, None)):
                     fn = getattr(field, method)
-                    values = np.stack([np.asarray(fn(i), dtype=float) for i in range(len(times))])
+                    values = np.stack([np.ma.filled(
+                        np.ma.asanyarray(fn(i), dtype=float), np.nan)
+                        for i in range(len(times))])
                     break
         if values is None:
             raise TypeError(
@@ -386,12 +403,13 @@ def _draw_footer(fig, spec, st, footer_var: str) -> None:
     )
 
 
-def _draw_gap_panel(ax_m, st) -> None:
-    """Mark a GRACE gap-month frame as NO DATA (never interpolated)."""
+def _draw_gap_panel(ax_m, st, title="NO GRACE OBSERVATION",
+                    subtitle="no GRACE/GRACE-FO solution this month") -> None:
+    """Mark an all-NaN frame as NO DATA (never interpolated)."""
     ax_m.text(
         0.5,
         0.55,
-        "NO GRACE OBSERVATION",
+        title,
         transform=ax_m.transAxes,
         ha="center",
         va="center",
@@ -405,7 +423,7 @@ def _draw_gap_panel(ax_m, st) -> None:
     ax_m.text(
         0.5,
         0.44,
-        "no GRACE/GRACE-FO solution this month",
+        subtitle,
         transform=ax_m.transAxes,
         ha="center",
         va="center",
@@ -534,11 +552,31 @@ def render_viz(
         if not bound > 0.0:
             bound = 1.0
         vmin, vmax = -bound, bound
+        norm = None
+    elif spec.variable == "ocean-color":
+        # Chlorophyll-a is lognormally distributed (0.01–100 mg/m³ is
+        # the honest dynamic range): a LOGARITHMIC color scale is the
+        # only rendering that shows both oligotrophic gyres and bloom
+        # peaks in one map. LogNorm needs vmin > 0, so the floor is
+        # the smallest positive finite value across all frames.
+        from matplotlib.colors import LogNorm
+        finite = values[np.isfinite(values)]
+        positive = finite[finite > 0]
+        vmin = (spec.vmin if spec.vmin is not None
+                else (float(np.min(positive)) if positive.size else 0.01))
+        vmax = (spec.vmax if spec.vmax is not None
+                else (float(np.max(finite)) if finite.size else 1.0))
+        if not vmin > 0.0:
+            vmin = 0.01
+        if not vmax > vmin:
+            vmax = vmin * 10.0
+        norm = LogNorm(vmin=vmin, vmax=vmax)
     else:
         vmin = spec.vmin if spec.vmin is not None else float(np.nanmin(values))
         vmax = spec.vmax if spec.vmax is not None else float(np.nanmax(values))
         if not vmin < vmax:
             vmax = vmin + 1.0  # degenerate constant field: avoid a zero-range cmap
+        norm = None
 
     st = _STYLE[style]
     var_cmap = _VARIABLE_CMAPS.get(spec.variable, st["cmap"])
@@ -573,9 +611,14 @@ def render_viz(
         if underlay_rgba is not None:
             ax_m.imshow(underlay_rgba, extent=underlay_extent,
                         origin="upper", aspect="auto", zorder=1)
-        mesh = ax_m.pcolormesh(
-            lons, lats, grid, vmin=vmin, vmax=vmax, cmap=var_cmap, shading="auto"
-        )
+        if norm is not None:
+            mesh = ax_m.pcolormesh(
+                lons, lats, grid, norm=norm, cmap=var_cmap, shading="auto"
+            )
+        else:
+            mesh = ax_m.pcolormesh(
+                lons, lats, grid, vmin=vmin, vmax=vmax, cmap=var_cmap, shading="auto"
+            )
         if coastline_segs:
             coast_color = _UNDERLAY_COAST_COLOR[style]
             for seg in coastline_segs:
@@ -583,11 +626,23 @@ def render_viz(
                           lw=1.2, zorder=5, solid_capstyle="round")
         # GRACE gap months (e.g. the 2017–2018 inter-mission gap) are
         # all-NaN frames: they are never interpolated, and the frame is
-        # visibly marked instead of rendering as an empty map.
-        is_gap_frame = spec.variable == "water-storage" and bool(
-            np.all(np.isnan(grid)))
+        # visibly marked instead of rendering as an empty map. Ocean
+        # color frames that are entirely cloud-covered (all-NaN) get the
+        # same treatment — partially cloudy frames keep their NaN
+        # cells, which show the GEBCO/Natural Earth underlay beneath as
+        # honest "no observation" regions (never filled).
+        is_gap_frame = (
+            spec.variable == "water-storage" and bool(np.all(np.isnan(grid)))
+        ) or (
+            spec.variable == "ocean-color" and bool(np.all(np.isnan(grid)))
+        )
         if is_gap_frame:
-            _draw_gap_panel(ax_m, st)
+            if spec.variable == "ocean-color":
+                _draw_gap_panel(ax_m, st,
+                                title="NO OCEAN COLOR OBSERVATION",
+                                subtitle="fully cloud-covered this period")
+            else:
+                _draw_gap_panel(ax_m, st)
         ax_m.set_xlim(lon_min, lon_max)
         ax_m.set_ylim(lat_min, lat_max)
         ax_m.tick_params(colors=st["muted"], labelsize=14)
@@ -676,6 +731,9 @@ def render_viz(
         ov = list(getattr(spec, "overlays", ()))
         if ov:
             footer_var += " + " + " + ".join(f"{o} contours" for o in ov)
+        ctx = list(getattr(spec, "context", ()))
+        if ctx:
+            footer_var += " + " + " + ".join(f"{c} context" for c in ctx)
         if spec.variable == "water-storage":
             # The anomaly baseline is part of the data's identity:
             # every value is vs the 2004–2009 time-mean removed by CSR.
@@ -683,6 +741,14 @@ def render_viz(
             n_gaps = sum(gap_flags)
             if n_gaps:
                 footer_var += f" · {n_gaps} month{'s' if n_gaps != 1 else ''} with no GRACE data"
+        if spec.variable == "ocean-color":
+            # The log scale is part of the map's identity (chlorophyll
+            # is lognormal); cloud gaps are honest "no observation".
+            footer_var += " · log scale"
+            n_gaps = sum(gap_flags)
+            if n_gaps:
+                footer_var += (f" · {n_gaps} frame{'s' if n_gaps != 1 else ''} "
+                               "with no ocean-color observation (cloud)")
         _draw_footer(fig, spec, st, footer_var)
 
         frame_path = out / f"frame_{n + 1:04d}.png"
@@ -716,6 +782,16 @@ def render_viz(
                 if spec.variable == "water-storage" else None),
             "gap_months": [ts for ts, gap in zip(timestamps, gap_flags)
                            if gap] or None,
+            # Ocean-color provenance: the log scale is part of the
+            # map's identity (chlorophyll is lognormally distributed),
+            # all-NaN frames are listed explicitly (they render as NO
+            # OCEAN COLOR OBSERVATION panels), and partial cloud gaps
+            # are honest NaN — the underlay shows through them.
+            "log_scale": spec.variable == "ocean-color" or None,
+            "gap_frames": ([ts for ts, gap in zip(timestamps, gap_flags)
+                            if gap]
+                           if spec.variable == "ocean-color" else None) or None,
+            "context": list(getattr(spec, "context", ())) or None,
         },
     }
     manifest_path = out / "manifest.json"

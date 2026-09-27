@@ -36,7 +36,7 @@ san-francisco-bay.
 |---|---|
 | `sst` | sst, temperature(s), thermal, warmth, warm, cold, degree(s), celsius, °c, deg c |
 | `currents` | current(s), flow(s), stream(s), velocity, circulation, drift, eddy/eddies |
-| `chlorophyll` | chlorophyll, chl, algae, algal, bloom(s), phytoplankton |
+| `ocean-color` *(CoastWatch)* | chlorophyll, chl, algae, algal, bloom(s), phytoplankton, green ocean |
 | `wind` *(ERA5)* | wind(s), windy, gale(s), gust(s) |
 | `msl` *(ERA5)* | pressure(s), isobar(s), sea-level pressure |
 | `t2m` *(ERA5)* | air temperature(s), atmospheric temperature(s), heatwave(s), **heat** |
@@ -197,9 +197,16 @@ including the 5 new fire regions: `california`, `pacific-northwest`,
 `amazon-basin`, `australia-southeast`, `boreal-canada`),
 `sea-ice` in the polar regions (`arctic-ocean`, `southern-ocean`) →
 `nsidc` (NSIDC G02135 v4.0 — daily sea-ice concentration over keyless
-HTTPS; `sea-ice` elsewhere, Great Lakes `currents`, `chlorophyll`,
+HTTPS; `sea-ice` elsewhere, Great Lakes `currents`,
 `burn-scar`, `land-ice`, and `power-outage` have no adapter → `""`,
 and `is_fetchable` refuses them honestly).
+`ocean-color` in any region → `oceancolor` (NOAA CoastWatch ERDDAP —
+MODIS Aqua R2022 L3 chlorophyll-a, monthly default, ~4 km,
+2002-present, keyless; the required credentials-gated fallback is NASA
+OBPG MODIS Aqua L3 mapped chlorophyll-a via free Earthdata Login; the
+legacy `chlorophyll` variable name canonicalizes to `ocean-color`).
+Coastal/inland retrievals are indicative only (case-2 waters — see
+docs/OCEANCOLOR.md).
 `night-lights` → `blackmarble` in any region (NASA Black Marble VNP46A2
 V002 daily gap-filled lunar BRDF-adjusted DNB radiance,
 2012-01-19–present, free Earthdata Login — the parser always pins it,

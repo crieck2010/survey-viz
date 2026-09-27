@@ -56,7 +56,7 @@ def test_variable_currents_keywords(text, expected):
     ],
 )
 def test_variable_chlorophyll_keywords(text):
-    assert parse_description(text, today=TODAY).variable == "chlorophyll"
+    assert parse_description(text, today=TODAY).variable == "ocean-color"  # canonical since v0.13.0
 
 
 @pytest.mark.parametrize(
@@ -147,7 +147,7 @@ def test_title_derived():
 
 def test_title_derived_single_year():
     spec = parse_description("Puget Sound chlorophyll last summer", today=TODAY)
-    assert spec.title == "Puget Sound — Chlorophyll-a, 2026"
+    assert spec.title == "Puget Sound — Chlorophyll-a (Ocean Color), 2026"
 
 
 def test_title_derived_currents():

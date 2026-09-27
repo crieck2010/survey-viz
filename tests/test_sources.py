@@ -38,7 +38,7 @@ def test_default_source_ocean_oisst():
 
 def test_default_source_non_sst_empty():
     assert default_source("currents", "lake-superior") == ""
-    assert default_source("chlorophyll", "north-atlantic") == ""
+    assert default_source("chlorophyll", "north-atlantic") == "oceancolor"  # legacy alias -> ocean color
 
 
 def test_default_source_currents_oscar():
@@ -129,7 +129,7 @@ def test_package_exports():
                  "is_source_fetchable", "KNOWN_SOURCES", "SOURCE_LABELS"):
         assert name in viz.__all__
         assert hasattr(viz, name)
-    assert viz.__version__ == "0.12.0"
+    assert viz.__version__ == "0.13.0"
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +301,7 @@ def test_default_source_fire_any_region():
 def test_default_source_burn_scar_empty():
     from viz.sources import default_source
     assert default_source("burn-scar", "california") == ""
-    assert default_source("chlorophyll", "california") == ""
+    assert default_source("chlorophyll", "california") == "oceancolor"  # legacy alias -> ocean color
 
 
 def test_resolve_source_fire_firms():

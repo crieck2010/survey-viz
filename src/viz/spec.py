@@ -13,7 +13,12 @@ import datetime as _dt
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-KNOWN_VARIABLES = ("sst", "currents", "chlorophyll",
+KNOWN_VARIABLES = ("sst", "currents",
+                   # --- ocean color (survey-currents v0.14.0+, source
+                   # "oceancolor"): "ocean-color" is canonical since
+                   # v0.13.0; "chlorophyll" is the legacy alias and is
+                   # canonicalized to "ocean-color" on spec construction.
+                   "ocean-color", "chlorophyll",
                    "wind", "msl", "t2m", "tp",
                    "fire", "burn-scar",
                    "sea-ice", "land-ice",
@@ -29,6 +34,10 @@ KNOWN_VARIABLES = ("sst", "currents", "chlorophyll",
                    # "sea-level" (satellite altimetry, a different
                    # observable from GRACE TWS).
                    "sea-level")
+#: Legacy variable names canonicalized in ``VizSpec.__post_init__``
+#: (old serialized specs keep loading; the parser only emits the
+#: canonical names).
+_VARIABLE_ALIASES = {"chlorophyll": "ocean-color"}
 KNOWN_CADENCES = ("daily", "monthly", "yearly")
 KNOWN_LAYOUTS = ("reel-vertical",)
 KNOWN_STYLES = ("reel-dark", "light")
@@ -37,12 +46,23 @@ KNOWN_STYLES = ("reel-dark", "light")
 #: source and keep working unchanged).
 KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5", "oscar", "cmems-currents",
                  "firms", "nsidc", "imerg", "blackmarble", "gebco", "ibtracs",
-                 "grace", "usgs")
+                 "grace", "usgs", "oceancolor")
 #: Variables that may appear in ``VizSpec.overlays`` (drawn as contour
 #: overlays over the base variable, e.g. isobars over a wind map).
 KNOWN_OVERLAYS = ("wind", "msl", "t2m", "tp")
 #: Hard cap: at most this many overlays on one spec (v0.3.0 supports one).
 MAX_OVERLAYS = 1
+#: Variables that may appear in ``VizSpec.context`` (companion data the
+#: pipeline fetches alongside the base variable — e.g. ``"currents"``
+#: next to an ``"ocean-color"`` bloom map, or ``"sst"`` next to it for
+#: "bloom conditions". Unlike ``overlays`` these are NOT drawn as
+#: contours on the base map: they are fetched, recorded in provenance,
+#: named in the frame footer, and handed to downstream peers
+#: (survey-flow renders current vectors; survey-animate can encode
+#: companion reels). v0.13.0 supports the ocean-color combinations.
+KNOWN_CONTEXTS = ("currents", "sst")
+#: Hard cap: at most this many context variables on one spec.
+MAX_CONTEXTS = 2
 
 
 def _coerce_date(value: Any, field: str) -> _dt.date:
@@ -85,7 +105,7 @@ class VizSpec:
         title: human-readable title, burned into the frame header.
         region_key: slug into the gazetteer (``data/regions.yaml``).
         bbox: (lon_min, lat_min, lon_max, lat_max) in decimal degrees.
-        variable: e.g. ``"sst"``, ``"currents"``, ``"chlorophyll"``.
+        variable: e.g. ``"sst"``, ``"currents"``, ``"ocean-color"``.
         start/end: inclusive date range of the visualization.
         cadence: one of ``"daily"``, ``"monthly"``, ``"yearly"``.
         layout: ``"reel-vertical"`` (1080x1920). Only layout implemented in v0.1.0.
@@ -113,6 +133,15 @@ class VizSpec:
             map, e.g. ``("msl",)`` for isobars over a wind field (the
             "storm" combination). Max ``MAX_OVERLAYS`` entries, each in
             ``KNOWN_OVERLAYS`` and different from ``variable``.
+        context: optional companion variables the pipeline fetches
+            alongside the base variable, e.g. ``("currents",)`` on an
+            ``"ocean-color"`` spec for "phytoplankton bloom with ocean
+            currents", or ``("sst",)`` for "bloom conditions"
+            (chlorophyll vs temperature). Max ``MAX_CONTEXTS`` entries,
+            each in ``KNOWN_CONTEXTS`` and different from ``variable``.
+            Context is NOT drawn on the base map — it is fetched,
+            recorded in provenance, named in the frame footer, and
+            handed to downstream peers (see docs/OCEANCOLOR.md).
         underlay: optional basemap underlay drawn beneath the variable
             map (GEBCO tint/hillshade + Natural Earth coastlines,
             ``True`` by default). The underlay is fetched lazily from
@@ -154,6 +183,7 @@ class VizSpec:
     source: str = ""
     source_reason: str = ""
     overlays: Tuple[str, ...] = ()
+    context: Tuple[str, ...] = ()
     underlay: bool = True
     storm_name: str = ""
     storm_rank: str = ""
@@ -167,6 +197,10 @@ class VizSpec:
         self.bbox = _validate_bbox(self.bbox)
         if not isinstance(self.variable, str) or not self.variable.strip():
             raise ValueError("VizSpec.variable: must be a non-empty string")
+        # Legacy alias: pre-v0.13.0 "chlorophyll" specs load as the
+        # canonical "ocean-color" (same observable, new adapter).
+        self.variable = _VARIABLE_ALIASES.get(
+            self.variable.strip().lower(), self.variable.strip())
         self.start = _coerce_date(self.start, "start")
         self.end = _coerce_date(self.end, "end")
         if self.start > self.end:
@@ -215,6 +249,19 @@ class VizSpec:
                 f"got {len(overlays)}")
         # Canonicalize (tuple of str) so == / to_dict are stable.
         self.overlays = overlays
+        context = tuple(str(c).strip().lower() for c in self.context or ())
+        for cx in context:
+            if cx not in KNOWN_CONTEXTS:
+                raise ValueError(
+                    f"VizSpec.context: {cx!r} not in {KNOWN_CONTEXTS}")
+            if cx == self.variable:
+                raise ValueError(
+                    f"VizSpec.context: {cx!r} duplicates the base variable")
+        if len(context) > MAX_CONTEXTS:
+            raise ValueError(
+                f"VizSpec.context: at most {MAX_CONTEXTS} context variable(s), "
+                f"got {len(context)}")
+        self.context = context
         if not isinstance(self.underlay, bool):
             raise TypeError(
                 "VizSpec.underlay: expected bool, got "
@@ -248,6 +295,7 @@ class VizSpec:
             "source": self.source,
             "source_reason": self.source_reason,
             "overlays": list(self.overlays),
+            "context": list(self.context),
             "underlay": self.underlay,
             "storm_name": self.storm_name,
             "storm_rank": self.storm_rank,
@@ -263,7 +311,9 @@ class VizSpec:
         dicts without ``"underlay"`` (pre-v0.9.0) load with ``True``;
         dicts without ``"storm_name"`` / ``"storm_rank"`` /
         ``"storm_top_n"`` (pre-v0.10.0) load with ``""`` / ``""`` /
-        ``None``.
+        ``None``; dicts without ``"context"`` (pre-v0.13.0) load with
+        ``()``; ``"variable": "chlorophyll"`` (pre-v0.13.0) loads as
+        the canonical ``"ocean-color"``.
         """
         if not isinstance(data, dict):
             raise TypeError(f"VizSpec.from_dict: expected dict, got {type(data).__name__}")

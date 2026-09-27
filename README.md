@@ -53,8 +53,9 @@ columns (optional — the chart panel shows a placeholder note without it).
 from viz import parse_description, render_viz, VizSpec
 
 spec = parse_description("Chlorophyll in Puget Sound last summer")
-print(spec.title)   # "Puget Sound — Chlorophyll-a, 2026"
+print(spec.title)   # "Puget Sound — Chlorophyll-a (Ocean Color), 2026"
 print(spec.bbox)    # (-123.5, 47.0, -122.0, 48.8)
+print(spec.context) # () — plain ocean-color requests have no context
 
 # field: duck-typed — dict, numpy bundle, or a GlseaField-shaped object
 # (has .times/.lats/.lons + 3D grid access). Never imports survey-currents.
@@ -67,8 +68,14 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   40 regions: the 5 Great Lakes + 21 coastal regions/bays/seas + 8 ocean
   basins + the Gulf Stream + 5 fire regions (`data/regions.yaml`).
 - **Variable**: `temperature/sst/thermal/warmth/cold` → `sst`;
-  `current/flow/stream/velocity/eddy/eddies` → `currents`; `chlorophyll/chl/algae/bloom` →
-  `chlorophyll`; **wind(s)/windy/gale(s)** → `wind`; **pressure/isobar(s)** →
+  `current/flow/stream/velocity/eddy/eddies` → `currents`;
+  `chlorophyll/chl/algae/bloom/phytoplankton/ocean color/green ocean` →
+  `ocean-color` (chlorophyll-a, NOAA CoastWatch L3 via survey-currents
+  v0.14.0+); bloom wording *with currents* / bloom conditions /
+  "chlorophyll vs temperature" additionally set `context` to
+  `("currents",)` / `("sst",)` (companion datasets, recorded in the
+  manifest); terrestrial water-quality wording (nitrate, turbidity,
+  dissolved oxygen, "water quality") is refused honestly — no adapter; **wind(s)/windy/gale(s)** → `wind`; **pressure/isobar(s)** →
   `msl`; **air temperature/heatwave/heat** → `t2m`;
   **rain/rainfall/precipitation/deluge** → `tp`;
   **streamflow/river discharge/stream discharge/river
@@ -195,9 +202,17 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
   radiance in any region (needs a free Earthdata Login) — all through
   `survey-currents`
   (v0.10.0+ for GEBCO, v0.9.0+ for Black Marble, v0.8.0+ for IMERG,
-  v0.7.0+ for NSIDC). `bathymetry`/`elevation` via GEBCO 2024 in any
+  v0.7.0+ for NSIDC, v0.14.0+ for ocean color). `bathymetry`/`elevation`
+  via GEBCO 2024 in any
   region (static compilation — keyless download, cached locally).
-  `chlorophyll`, `burn-scar`, `land-ice`, `power-outage`, and
+  `ocean-color` (chlorophyll-a) via NOAA CoastWatch ERDDAP keyless L3
+  grids (MODIS Aqua R2022 default, VIIRS SNPP, ESA OC-CCI merge; ~4 km,
+  daily/8-day/monthly) in any
+  region — cloud-covered cells stay NaN (never interpolated) and
+  fully cloudy frames render as NO OBSERVATION panels. The
+  credentials-required NASA OBPG fallback covers CoastWatch outages
+  (free Earthdata Login). `burn-scar`,
+  `land-ice`, `power-outage`, and
   `country-borders` still
   have no fetch adapter: they parse but raise a clear "no adapter yet"
   error (burn-scar's message points at survey-burn as the future

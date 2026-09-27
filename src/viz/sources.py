@@ -55,12 +55,19 @@ Routing rules (documented in docs/PARSER.md):
   ``""``: sea level is satellite altimetry, a different observable
   from GRACE terrestrial water storage, so it is refused rather than
   answered with a GRACE map.
-* ``"chlorophyll"``, ``"burn-scar"``, ``"land-ice"``, and
-  ``"power-outage"`` have no fetch adapter -> ``""`` (callers turn this
-  into the honest "no adapter" refusal they already produce;
-  burn-scar / burn-severity mapping belongs to survey-burn's future
-  imagery adapter, not FIRMS; glaciers / ice sheets / icebergs are a
-  different physical product from sea-ice concentration, not NSIDC).
+* ``"ocean-color"`` anywhere -> ``"oceancolor"`` (NOAA CoastWatch
+  ERDDAP: MODIS Aqua R2022 Level-3 chlorophyll-a, monthly default,
+  ~4 km, 2002-present; keyless. VIIRS SNPP and ESA OC-CCI v6.0
+  sensors selectable at fetch time; the parser pins this source
+  with an inspectable ``source_reason``). The legacy
+  ``"chlorophyll"`` variable name is canonicalized to
+  ``"ocean-color"`` by ``VizSpec`` and routes the same way.
+* ``"burn-scar"``, ``"land-ice"``, and ``"power-outage"`` have no
+  fetch adapter -> ``""`` (callers turn this into the honest "no
+  adapter" refusal they already produce; burn-scar / burn-severity
+  mapping belongs to survey-burn's future imagery adapter, not FIRMS;
+  glaciers / ice sheets / icebergs are a different physical product
+  from sea-ice concentration, not NSIDC).
 
 Note: the ``"era5"`` adapter is ``currents.era5.fetch_era5``, whose first
 argument is the variable list — ``fetch_for_source("era5")`` returns the
@@ -75,6 +82,15 @@ Note: the ``"imerg"`` adapter is ``currents.imerg.fetch_imerg`` —
 ``(bbox, start, end, accumulate=..., run=..., stride_days=...)``;
 reel-studio uses the ``fetch_imerg`` defaults (``accumulate="daily"``,
 ``run="late"``).
+Note: the ``"oceancolor"`` adapter is
+``currents.oceancolor.fetch_oceancolor`` — ``fetch_for_source("oceancolor")``
+returns the raw callable and callers pass ``(bbox, start, end)``
+positionally, with keyword args ``product="chlorophyll-a"``,
+``cadence=...`` (``"monthly"``/``"weekly"``/``"daily"`` — map the spec's
+``"daily"``/``"monthly"`` cadence through; ``"yearly"`` is refused by
+the adapter), ``sensor=...`` (``"modis-aqua"`` default,
+``"viirs-snpp"``, ``"multi"``), and ``source=...``
+(``"coastwatch"``/``"obpg"``/``"cmems"``/``"auto"``).
 Note: the ``"blackmarble"`` adapter is
 ``currents.blackmarble.fetch_blackmarble`` —
 ``fetch_for_source("blackmarble")`` returns the raw callable and
@@ -115,6 +131,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "ibtracs": "NOAA IBTrACS v04r01",
     "grace": "CSR GRACE/GRACE-FO RL06.3",
     "usgs": "USGS Water Services (NWIS)",
+    "oceancolor": "NOAA CoastWatch Ocean Color (MODIS Aqua R2022 L3)",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -134,6 +151,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "ibtracs": ("currents.storms", "fetch_ibtracs"),
     "grace": ("currents.grace", "fetch_grace"),
     "usgs": ("currents.streamgages", "fetch_usgs"),
+    "oceancolor": ("currents.oceancolor", "fetch_oceancolor"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -153,6 +171,7 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "ibtracs": "0.11.0",
     "grace": "0.12.0",
     "usgs": "0.13.0",
+    "oceancolor": "0.14.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -181,11 +200,12 @@ def default_source(variable: str, region_key: str) -> str:
     region (the FIRMS area API is global), ``"nsidc"`` for ``sea-ice``
     in the polar regions only (mid-latitude sea ice has no ice domain
     in the product), ``"grace"`` for ``"water-storage"`` in any region
-    (the CSR mascon archive is global), and ``""`` when no adapter
-    exists (``chlorophyll``, ``burn-scar`` — burned-area / burn-severity
-    mapping is survey-burn's future domain, not FIRMS; ``land-ice`` —
-    glaciers / ice sheets / icebergs are a different physical product
-    from sea-ice concentration).
+    (the CSR mascon archive is global), ``"oceancolor"`` for
+    ``"ocean-color"`` in any region (the MODIS Aqua R2022 L3 grid is global),
+    and ``""`` when no adapter exists (``burn-scar`` — burned-area /
+    burn-severity mapping is survey-burn's future domain, not FIRMS;
+    ``land-ice`` — glaciers / ice sheets / icebergs are a different
+    physical product from sea-ice concentration).
     """
     variable = str(variable)
     if variable == "sst":
@@ -241,6 +261,15 @@ def default_source(variable: str, region_key: str) -> str:
     # outage mapping is temporal change detection across two or more
     # epochs, and a single daily Black Marble map cannot show it — so
     # it is refused rather than misrendered.
+    # "ocean-color" (and its legacy alias "chlorophyll") route globally
+    # to NOAA CoastWatch ERDDAP — the MODIS Aqua R2022 Level-3 grid is
+    # global, so there is no regional restriction. Inland/coastal
+    # retrievals are indicative only: case-2 waters suffer land
+    # adjacency, bottom reflectance, CDOM, and suspended-sediment
+    # contamination (see docs/OCEANCOLOR.md), but the geometry covers
+    # the Great Lakes.
+    if variable in ("ocean-color", "chlorophyll"):
+        return "oceancolor"
     # "country-borders" has no adapter either: Natural Earth vectors
     # are a cartographic underlay, not a data variable — "country
     # borders" alone is refused rather than rendered as an empty map.
@@ -280,8 +309,6 @@ def _explain_refusal(variable: str, region_key: str) -> str:
         return ("no source: no lake-scale current adapter exists — "
                 f"'currents' over {region_key!r} is refused rather than "
                 "fetched from a global model that cannot resolve the lakes.")
-    if variable == "chlorophyll":
-        return "no source: no chlorophyll-a adapter exists yet."
     if variable == "burn-scar":
         return ("no source: burned-area / burn-severity mapping belongs to "
                 "survey-burn's future imagery adapter, not the FIRMS "
@@ -342,6 +369,9 @@ def explain_source(spec: Any) -> str:
         "usgs": "streamflow / river discharge -> USGS Water Services "
                 "(NWIS) streamgage daily values (keyless, US-only; "
                 "empty field outside USGS coverage)",
+        "oceancolor": "ocean color / chlorophyll-a -> NOAA CoastWatch "
+                      "ERDDAP (MODIS Aqua R2022 L3, monthly, ~4 km, "
+                      "2002-present; keyless)",
     }.get(source, f"variable {variable!r}")
     return (f"source {source!r} ({label}): regional default — {default_why}; "
             "the parser did not pin a source.")
