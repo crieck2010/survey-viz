@@ -43,6 +43,8 @@ san-francisco-bay.
 | `tp` *(ERA5)* | rain, rainfall, precipitation, deluge(s), downpour(s) |
 | `fire` *(FIRMS)* | fire(s), wildfire(s), burning, burn(s) |
 | `burn-scar` *(no adapter)* | burn scar(s), burned area(s), burn severity |
+| `sea-ice` *(NSIDC)* | sea ice / sea-ice, pack ice, ice concentration, ice cover, ice extent, **ice** |
+| `land-ice` *(no adapter)* | glacier(s), ice sheet(s), iceberg(s), land ice |
 
 Rules:
 
@@ -61,10 +63,31 @@ Rules:
   with a message pointing at `survey-burn` as the future home of
   burn-scar mapping. This is the `chlorophyll` precedent: parseable,
   not fetchable, never silently misrouted.
+- **`land-ice` wins ties against `sea-ice`.** "ice sheet" matches both
+  the `sea-ice` pattern (`\bice\b`) and the `land-ice` pattern at the
+  same position; the land-ice reading wins because glaciers / ice
+  sheets / icebergs are a different physical product from sea-ice
+  concentration — routing them to NSIDC would be a lie. (Same
+  mechanism as `burn-scar` winning ties against `fire`.)
+- **`land-ice` is an honest refusal, not a fetch.** It parses (so the
+  failure message is precise) but `viz.sources.default_source` returns
+  `""` for it — no adapter exists. Downstream, `reel-studio` refuses
+  with a message explaining that glaciers / ice sheets / icebergs need
+  a different product (future work), and that "sea ice" routes to
+  NSIDC.
+- **`sea-ice` routes to NSIDC only in polar regions.** `default_source`
+  returns `"nsidc"` for the `arctic-ocean` / `southern-ocean` gazetteer
+  regions and `""` elsewhere: the G02135 grids cover north of 30.98°N /
+  south of 39.23°S, so mid-latitude "sea ice" has no ice domain in the
+  product and would return an all-NaN field.
 - **Fire specs render daily.** `fire` is the one variable whose parser
   default cadence is `daily` (not `monthly`): fires are fast phenomena,
   and the FIRMS density grid is one grid per UTC date — monthly
   bucketing would show only a single day per month.
+- **Sea-ice specs render daily too.** `sea-ice` joins `fire` in the
+  `daily` cadence default (v0.6.0): ice moves fast, and the NSIDC
+  source is daily — monthly bucketing would show only a single day
+  per month.
 - **Storm keywords** (`storm(s)`, `cyclone(s)`, `hurricane(s)`, `typhoon(s)`)
   compete in the same earliest-wins race and map to the
   **`wind` + `overlays=["msl"]` combination**: a wind base map with pressure
@@ -125,14 +148,15 @@ Notes:
   - Labels: sst → "Surface Water Temperature", currents → "Surface Currents",
     chlorophyll → "Chlorophyll-a", wind → "10-m Wind", msl → "Sea-Level Pressure",
     t2m → "2-m Air Temperature", tp → "Precipitation",
-    fire → "Active Fires", burn-scar → "Burn Scar".
+    fire → "Active Fires", burn-scar → "Burn Scar",
+    sea-ice → "Sea Ice", land-ice → "Land Ice".
   - Years: `2021–2026` (en dash) across years, or `2026` for a single year.
   - Example: "Lake Superior — Surface Water Temperature, 2021–2026".
 
 ## 5. Cadence / layout / style
 
 The parser always emits `layout="reel-vertical"`, `style="reel-dark"`,
-and `cadence="monthly"` — except for `fire`, which emits
+and `cadence="monthly"` — except for `fire` and `sea-ice`, which emit
 `cadence="daily"`. (Finer control belongs to the spec/CLI layer, not to
 free text.)
 
@@ -156,9 +180,12 @@ the 5 Great Lakes → `oscar` (NASA PODAAC OSCAR v2.0 — fetchable in any
 non-Great-Lakes region, including the 35th region, `gulf-stream`),
 `fire` anywhere → `firms` (NASA FIRMS — fetchable in **any** region,
 including the 5 new fire regions: `california`, `pacific-northwest`,
-`amazon-basin`, `australia-southeast`, `boreal-canada`).
-Great Lakes `currents`, `chlorophyll`, and `burn-scar` have no adapter
-→ `""`, and `is_fetchable` refuses them honestly.
+`amazon-basin`, `australia-southeast`, `boreal-canada`),
+`sea-ice` in the polar regions (`arctic-ocean`, `southern-ocean`) →
+`nsidc` (NSIDC G02135 v4.0 — daily sea-ice concentration over keyless
+HTTPS; `sea-ice` elsewhere, Great Lakes `currents`, `chlorophyll`,
+`burn-scar`, and `land-ice` have no adapter → `""`, and
+`is_fetchable` refuses them honestly).
 
 Examples:
 
@@ -189,6 +216,19 @@ Examples:
 - "Mediterranean burn scars 2020 to 2024" → `variable="burn-scar"` →
   honest refusal (no adapter; burn-severity mapping is survey-burn's
   future domain, not FIRMS)
+- "Arctic Ocean sea ice over the past 5 years" →
+  `variable="sea-ice"`, `region_key="arctic-ocean"`,
+  `cadence="daily"`, `source=""` → resolves to `nsidc` (NSIDC G02135
+  v4.0 daily sea-ice concentration)
+- "Southern Ocean ice concentration last summer" →
+  `variable="sea-ice"`, `region_key="southern-ocean"`, `source=""` →
+  resolves to `nsidc`
+- "Antarctic pack ice this year" → `variable="sea-ice"`,
+  `region_key="southern-ocean"` (via the new `antarctic` alias),
+  `source=""` → resolves to `nsidc`
+- "Antarctic ice sheet this year" → `variable="land-ice"` → honest
+  refusal (glaciers / ice sheets / icebergs are a different physical
+  product from sea-ice concentration — never routed to NSIDC)
 
 ## 7. Failure mode
 

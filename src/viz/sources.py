@@ -20,16 +20,24 @@ Routing rules (documented in docs/PARSER.md):
   anywhere except the 5 Great Lakes -> ``"oscar"`` (Great Lakes
   ``currents`` stays an honest refusal — no lake-scale current adapter
   exists); ``fire`` anywhere -> ``"firms"`` (the FIRMS area API is
-  global).
-* ``"chlorophyll"`` and ``"burn-scar"`` have no fetch adapter -> ``""``
-  (callers turn this into the honest "no adapter" refusal they already
-  produce; burn-scar / burn-severity mapping belongs to survey-burn's
-  future imagery adapter, not FIRMS).
+  global); ``sea-ice`` in the polar regions (``arctic-ocean``,
+  ``southern-ocean``) -> ``"nsidc"`` (NSIDC G02135; sea ice elsewhere
+  stays an honest refusal — the product has no mid-latitude ice domain).
+* ``"chlorophyll"``, ``"burn-scar"``, and ``"land-ice"`` have no fetch
+  adapter -> ``""`` (callers turn this into the honest "no adapter"
+  refusal they already produce; burn-scar / burn-severity mapping belongs
+  to survey-burn's future imagery adapter, not FIRMS; glaciers / ice
+  sheets / icebergs are a different physical product from sea-ice
+  concentration, not NSIDC).
 
 Note: the ``"era5"`` adapter is ``currents.era5.fetch_era5``, whose first
 argument is the variable list — ``fetch_for_source("era5")`` returns the
 raw callable and callers (reel-studio) must supply the variables from
 the spec (``[spec.variable] + spec.overlays``).
+Note: the ``"nsidc"`` adapter is ``currents.sea_ice.fetch_nsidc_sic`` —
+``fetch_for_source("nsidc")`` returns the raw callable and callers pass
+``(bbox, start, end, stride_days=...)`` positionally, like the
+global-SST adapters (hemisphere is auto-picked from the bbox).
 """
 
 from __future__ import annotations
@@ -57,6 +65,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "oscar": "NASA PODAAC OSCAR v2.0",
     "cmems-currents": "CMEMS Global Ocean Physics (daily)",
     "firms": "NASA FIRMS",
+    "nsidc": "NSIDC Sea Ice Index (G02135 v4.0)",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -69,6 +78,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "oscar": ("currents.currents_global", "fetch_oscar"),
     "cmems-currents": ("currents.currents_global", "fetch_cmems_currents"),
     "firms": ("currents.fires", "fetch_firms"),
+    "nsidc": ("currents.sea_ice", "fetch_nsidc_sic"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -81,10 +91,17 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "oscar": "0.5.0",
     "cmems-currents": "0.5.0",
     "firms": "0.6.0",
+    "nsidc": "0.7.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
 ERA5_VARIABLES = ("wind", "msl", "t2m", "tp")
+
+#: Region keys whose ice domain the NSIDC Sea Ice Index covers. ``sea-ice``
+#: is only routed to NSIDC for these polar regions — the G02135 grids
+#: cover north of 30.98°N / south of 39.23°S, and fetching mid-latitude
+#: ocean "sea ice" would return an all-NaN field.
+POLAR_REGION_KEYS = frozenset({"arctic-ocean", "southern-ocean"})
 
 
 def _great_lakes_keys() -> frozenset:
@@ -100,9 +117,13 @@ def default_source(variable: str, region_key: str) -> str:
     (``wind``/``msl``/``t2m``/``tp``) in any region, ``"oscar"`` for
     ``currents`` in any region except the 5 Great Lakes (Great Lakes
     currents stay an honest refusal), ``"firms"`` for ``fire`` in any
-    region (the FIRMS area API is global), and ``""`` when no adapter
-    exists (``chlorophyll``, ``burn-scar`` — burned-area / burn-severity
-    mapping is survey-burn's future domain, not FIRMS').
+    region (the FIRMS area API is global), ``"nsidc"`` for ``sea-ice``
+    in the polar regions only (mid-latitude sea ice has no ice domain
+    in the product), and ``""`` when no adapter exists
+    (``chlorophyll``, ``burn-scar`` — burned-area / burn-severity
+    mapping is survey-burn's future domain, not FIRMS; ``land-ice`` —
+    glaciers / ice sheets / icebergs are a different physical product
+    from sea-ice concentration).
     """
     variable = str(variable)
     if variable == "sst":
@@ -117,6 +138,16 @@ def default_source(variable: str, region_key: str) -> str:
         return "oscar"
     if variable == "fire":
         return "firms"
+    if variable == "sea-ice":
+        # NSIDC G02135 (survey-currents >= 0.7.0) is only honest for the
+        # polar regions — mid-latitude "sea ice" has no ice domain in the
+        # product and would return an all-NaN field.
+        if str(region_key) in POLAR_REGION_KEYS:
+            return "nsidc"
+        return ""
+    # "land-ice" (glaciers / ice sheets / icebergs) has no adapter: land
+    # ice is a different physical product from sea-ice concentration,
+    # and routing it to NSIDC would be a lie.
     return ""
 
 

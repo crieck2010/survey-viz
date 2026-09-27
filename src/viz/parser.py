@@ -40,6 +40,26 @@ _VARIABLE_PATTERNS = {
         r"burned[ -]?areas?",
         r"burn[ -]?severity",
     ],
+    # "land-ice" is listed BEFORE "sea-ice" so it wins ties the same way
+    # "burn-scar" wins ties against "fire": "ice sheet" matches both
+    # ``\bice\b`` (sea-ice) and ``ice\s*sheets?`` (land-ice) at the same
+    # position, and the land-ice reading is the honest one — glaciers,
+    # ice sheets, and icebergs are a different physical product with no
+    # fetch adapter (see viz.sources.default_source).
+    "land-ice": [
+        r"\bglaciers?\b",
+        r"\bice\s*sheets?\b",
+        r"\bicebergs?\b",
+        r"\bland\s*ice\b",
+    ],
+    "sea-ice": [
+        r"sea[ -]?ice",
+        r"\bpack\s*ice\b",
+        r"\bice\s*concentrations?\b",
+        r"\bice\s*covers?\b",
+        r"\bice\s*extents?\b",
+        r"\bice\b",
+    ],
     "fire": [
         r"wildfires?",
         r"\bfires?\b",
@@ -125,6 +145,8 @@ _VARIABLE_LABELS = {
     "tp": "Precipitation",
     "fire": "Active Fires",
     "burn-scar": "Burn Scar",
+    "sea-ice": "Sea Ice",
+    "land-ice": "Land Ice",
 }
 
 # --- time phrases ------------------------------------------------------------
@@ -365,6 +387,9 @@ def parse_description(
         default_time = True
 
     spec_title = title or _derive_title(region["name"], variable, start, end)
+    # Sea ice changes fast like fire: one frame per day, not one
+    # representative day per month (v0.6.0; the NSIDC source is daily).
+    cadence = "daily" if variable in ("fire", "sea-ice") else "monthly"
     return VizSpec(
         title=spec_title,
         region_key=region["key"],
@@ -372,9 +397,7 @@ def parse_description(
         variable=variable,
         start=start,
         end=end,
-        # Fires are fast phenomena: a fire reel wants one frame per day,
-        # not one representative day per month (v0.5.0).
-        cadence="daily" if variable == "fire" else "monthly",
+        cadence=cadence,
         layout="reel-vertical",
         style="reel-dark",
         source=_parse_source(normalized, variable),

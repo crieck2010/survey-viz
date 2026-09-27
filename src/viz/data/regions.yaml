@@ -180,14 +180,14 @@ regions:
     notes: SST fetchable via OISST (default) or MUR (high-resolution requests) in survey-currents v0.3.0+.
   - key: southern-ocean
     name: Southern Ocean
-    aliases: [southern ocean, antarctic ocean]
+    aliases: [southern ocean, antarctic ocean, antarctic]
     bbox: [-180.0, -75.0, 180.0, -55.0]
-    notes: Circumpolar framing; SST fetchable via OISST/MUR in survey-currents v0.3.0+.
+    notes: Circumpolar framing; SST fetchable via OISST/MUR in survey-currents v0.3.0+; sea ice fetchable via NSIDC G02135 (survey-currents v0.7.0+, survey-viz v0.6.0+).
   - key: arctic-ocean
     name: Arctic Ocean
-    aliases: [arctic ocean]
+    aliases: [arctic ocean, arctic]
     bbox: [-180.0, 66.0, 180.0, 90.0]
-    notes: SST fetchable via OISST/MUR in survey-currents v0.3.0+ (sea-ice regions are masked in the source data).
+    notes: SST fetchable via OISST/MUR in survey-currents v0.3.0+ (sea-ice regions are masked in the source data); sea ice fetchable via NSIDC G02135 (survey-currents v0.7.0+, survey-viz v0.6.0+).
 
   # ---- Current features (fetchable for currents via OSCAR since v0.4.0) ----
   - key: gulf-stream

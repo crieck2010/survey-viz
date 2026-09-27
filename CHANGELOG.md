@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-26
+
+### Added
+- NSIDC sea-ice source routing for the new survey-currents v0.7.0
+  adapter (`KNOWN_SOURCES += ("nsidc",)`, `KNOWN_VARIABLES +=
+  ("sea-ice", "land-ice")`): `VizSpec.source` may now be `"nsidc"`
+  (NSIDC G02135 v4.0 daily sea-ice concentration, 1978–present,
+  keyless — lazily imported from `currents.sea_ice.fetch_nsidc_sic`).
+  Minimum survey-currents version for `nsidc` is 0.7.0 (honest upgrade
+  message when the peer is older).
+- Default routing for `variable="sea-ice"`: **polar regions only**
+  (`arctic-ocean`, `southern-ocean` → `"nsidc"`); anywhere else it
+  resolves to `""` (honest refusal — the G02135 grids cover north of
+  30.98°N / south of 39.23°S, so mid-latitude "sea ice" would return an
+  all-NaN field).
+- Parser: `sea ice` / `sea-ice` / `pack ice` / `ice concentration` /
+  `ice cover` / `ice extent` / bare `ice` keywords; sea-ice specs default
+  to `cadence="daily"` (ice moves fast; the NSIDC source is daily).
+  New gazetteer aliases: `arctic` (arctic-ocean), `antarctic`
+  (southern-ocean) — "Antarctic pack ice this year" parses to
+  `sea-ice` / `southern-ocean` → `nsidc`.
+- **Land-ice disambiguation (documented in `docs/PARSER.md` §2):**
+  `glacier(s)` / `ice sheet(s)` / `iceberg(s)` / `land ice` parse to
+  `variable="land-ice"` — which wins ties against `sea-ice` ("ice
+  sheet" matches both groups at the same position) but has **no fetch
+  adapter**: glaciers / ice sheets / icebergs are a different physical
+  product from sea-ice concentration, and routing them to NSIDC would be
+  a lie.
+
 ## [0.5.0] - 2026-09-26
 
 ### Added

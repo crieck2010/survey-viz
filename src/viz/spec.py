@@ -15,7 +15,8 @@ from typing import Any, Dict, Optional, Tuple
 
 KNOWN_VARIABLES = ("sst", "currents", "chlorophyll",
                    "wind", "msl", "t2m", "tp",
-                   "fire", "burn-scar")
+                   "fire", "burn-scar",
+                   "sea-ice", "land-ice")
 KNOWN_CADENCES = ("daily", "monthly", "yearly")
 KNOWN_LAYOUTS = ("reel-vertical",)
 KNOWN_STYLES = ("reel-dark", "light")
@@ -23,7 +24,7 @@ KNOWN_STYLES = ("reel-dark", "light")
 #: resolve the regional default at fetch time" (v0.1.0 specs have no
 #: source and keep working unchanged).
 KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5", "oscar", "cmems-currents",
-                 "firms")
+                 "firms", "nsidc")
 #: Variables that may appear in ``VizSpec.overlays`` (drawn as contour
 #: overlays over the base variable, e.g. isobars over a wind map).
 KNOWN_OVERLAYS = ("wind", "msl", "t2m", "tp")
