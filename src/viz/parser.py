@@ -176,6 +176,36 @@ _VARIABLE_PATTERNS = {
         r"\btopograph(?:y|ic)\b",
         r"\bmountains?\b",
     ],
+    # --- GRACE variables (survey-currents v0.12.0+, source "grace") ---
+    # "water-storage" routes to CSR GRACE/GRACE-FO RL06.3 terrestrial
+    # water storage anomalies. "sea-level" and "streamflow" are
+    # refusal-only variables: "sea level" (without "pressure" — the
+    # negative lookahead keeps "sea level pressure" on "msl") is
+    # satellite altimetry, a different observable from GRACE TWS, and
+    # river discharge has no adapter yet (streamgages are item 11 of
+    # the remote-sensing program). Both get honest refusals from
+    # viz.sources, never a GRACE map.
+    "water-storage": [
+        r"\bwater[ -]?storages?\b",
+        r"\bgroundwaters?\b",
+        r"\baquifers?\b",
+        r"\bterrestrial\s+waters?\b",
+        r"\btotal\s+water\s+storages?\b",
+        r"\bgrace[\s-]?fo\b",
+        r"\bgrace\b",
+        r"\btws\b",
+        r"\bdroughts?\b",
+    ],
+    "sea-level": [
+        # Not "sea level pressure" — that stays "msl" (the lookahead
+        # fails on "pressure", so the msl pattern wins).
+        r"sea[\s-]?levels?\b(?!\s*pressures?\b)",
+        r"\bsea\s*level\s*rises?\b",
+    ],
+    "streamflow": [
+        r"\bstreamflows?\b",
+        r"\briver\s*discharges?\b",
+    ],
 }
 
 # Storm keywords: they name the ("wind", overlays=["msl"]) combination
@@ -239,6 +269,19 @@ _STORM_CONTEXT_PATTERNS = {
     "msl": [r"\bpressure\s*fields?\b", r"\bwith\s+pressures?\b"],
 }
 
+#: Optional precipitation context on a "water-storage" request
+#: ("Groundwater decline vs rainfall in California"): the overlay name
+#: is fetched by the pipeline (ERA5 or IMERG tp) and drawn as contours
+#: under the GRACE anomaly map. At most one (MAX_OVERLAYS == 1). When
+#: the context cannot be fetched the pipeline degrades to an "absent"
+#: manifest status instead of failing — never silently dropped.
+_WATER_CONTEXT_PATTERNS = {
+    "tp": [r"\bvs\.?\s+(?:rain|rainfall|precipitation)\b",
+           r"\bwith\s+(?:rain|rainfall|precipitation)\b",
+           r"\bcompared\s+to\s+(?:rain|rainfall|precipitation)\b",
+           r"\bagainst\s+(?:rain|rainfall|precipitation)\b"],
+}
+
 _VARIABLE_LABELS = {
     "sst": "Surface Water Temperature",
     "currents": "Surface Currents",
@@ -257,6 +300,9 @@ _VARIABLE_LABELS = {
     "elevation": "Elevation",
     "country-borders": "Country Borders",
     "storm-tracks": "Storm Tracks",
+    "water-storage": "Terrestrial Water Storage",
+    "streamflow": "Streamflow",
+    "sea-level": "Sea Level",
 }
 
 # --- time phrases ------------------------------------------------------------
@@ -429,6 +475,10 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
     pressure field" wording adds the corresponding ERA5 contour overlay
     (the pipeline fetches it as context; the renderer degrades
     gracefully when it is absent).
+
+    On a ``"water-storage"`` win, "vs rainfall" / "with rainfall"
+    wording adds a precipitation contour overlay (``"tp"``) — the GRACE
+    anomaly map stays the base map and precipitation is context.
     """
     lowered = text.lower()
     storm_req = _parse_storm_request(text)
@@ -462,6 +512,14 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
         # change detection, and a single daily Black Marble map would be
         # a lie. Documented in docs/PARSER.md.
         return "power-outage", (), False, "", "", None
+    if variable == "water-storage":
+        # "groundwater decline vs rainfall": keep GRACE as the base map
+        # and add precipitation as a contour overlay (the pipeline
+        # fetches it as context; it degrades to an "absent" manifest
+        # status when unavailable). Documented in docs/PARSER.md.
+        for ov_name, patterns in _WATER_CONTEXT_PATTERNS.items():
+            if any(re.search(p, lowered) for p in patterns):
+                return "water-storage", (ov_name,), False, "", "", None
     return variable, best[2], False, "", "", None
 
 
@@ -552,6 +610,10 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
     * ``"storm-tracks"`` always pins ``"ibtracs"`` (NOAA IBTrACS
       v04r01 tropical-cyclone best tracks) with an inspectable
       ``source_reason`` — in every region.
+    * ``"water-storage"`` always pins ``"grace"`` (CSR GRACE/GRACE-FO
+      RL06.3 terrestrial water storage anomalies: monthly, cm of
+      liquid-water-equivalent thickness, land-only, 2002–present)
+      with an inspectable ``source_reason`` — in every region.
 
     The reason is always populated when a source is pinned (used for
     ``VizSpec.source_reason``).
@@ -599,6 +661,11 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
         return ("ibtracs",
                 "storm track/identity request -> "
                 "NOAA IBTrACS v04r01 best tracks")
+    if variable == "water-storage":
+        return ("grace",
+                "water storage / groundwater description -> "
+                "CSR GRACE/GRACE-FO RL06.3 terrestrial water storage "
+                "anomalies (monthly, cm LWE, land-only)")
     return "", ""
 
 
@@ -691,11 +758,14 @@ def parse_description(
     # no explicit time phrase was given (v0.9.0 — GEBCO is a static
     # compilation, not a time series). Storm tracks are fix-level time
     # series: daily cadence, one frame per day, tracks drawn
-    # cumulatively (v0.10.0).
+    # cumulatively (v0.10.0). Water storage is a monthly product: GRACE
+    # always renders one frame per month (v0.11.0).
     if variable in ("bathymetry", "elevation"):
         cadence = "yearly"
         if default_time:
             start = end = today
+    elif variable == "water-storage":
+        cadence = "monthly"
     else:
         cadence = "daily" if variable in ("fire", "sea-ice", "night-lights",
                                           "storm-tracks") else "monthly"

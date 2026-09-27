@@ -94,6 +94,11 @@ _VARIABLE_UNITS = {
     # "ibtracs"): max sustained wind in knots drives the
     # Saffir-Simpson coloring.
     "storm-tracks": "kt",
+    # CSR GRACE/GRACE-FO RL06.3 terrestrial water storage
+    # (survey-currents v0.12.0+, source "grace"): anomalies in cm of
+    # liquid-water-equivalent thickness vs the 2004–2009 time-mean
+    # (land-only; ocean cells are NaN).
+    "water-storage": "cm",
 }
 
 #: Colormaps per variable for the main map panel. Variables not listed
@@ -101,6 +106,10 @@ _VARIABLE_UNITS = {
 _VARIABLE_CMAPS = {
     "bathymetry": "Blues_r",   # deep = dark blue
     "elevation": "terrain",
+    # Diverging anomaly colormap for GRACE TWS: brown = drier than the
+    # 2004–2009 mean, blue = wetter; the scale is always centered on
+    # zero (see the vmin/vmax block in render_viz).
+    "water-storage": "BrBG",
 }
 
 #: Coastline color per style for the basemap underlay.
@@ -362,6 +371,37 @@ def _draw_footer(fig, spec, st, footer_var: str) -> None:
     )
 
 
+def _draw_gap_panel(ax_m, st) -> None:
+    """Mark a GRACE gap-month frame as NO DATA (never interpolated)."""
+    ax_m.text(
+        0.5,
+        0.55,
+        "NO GRACE OBSERVATION",
+        transform=ax_m.transAxes,
+        ha="center",
+        va="center",
+        fontsize=30,
+        weight="bold",
+        color=st["muted"],
+        zorder=6,
+        bbox=dict(boxstyle="round,pad=0.6", fc=st["face"],
+                  ec=st["muted"], alpha=0.9),
+    )
+    ax_m.text(
+        0.5,
+        0.44,
+        "no GRACE/GRACE-FO solution this month",
+        transform=ax_m.transAxes,
+        ha="center",
+        va="center",
+        fontsize=18,
+        color=st["muted"],
+        zorder=6,
+        bbox=dict(boxstyle="round,pad=0.4", fc=st["face"],
+                  ec=st["muted"], alpha=0.9),
+    )
+
+
 def _fetch_underlay_once(spec, plt, np, want: bool):
     """Fetch the basemap underlay once per render.
 
@@ -464,10 +504,21 @@ def render_viz(
         _fetch_underlay_once(spec, plt, np, want_underlay)
 
     # Fixed color scale: from the spec when given, else the full data range once.
-    vmin = spec.vmin if spec.vmin is not None else float(np.nanmin(values))
-    vmax = spec.vmax if spec.vmax is not None else float(np.nanmax(values))
-    if not vmin < vmax:
-        vmax = vmin + 1.0  # degenerate constant field: avoid a zero-range cmap
+    if spec.variable == "water-storage" and spec.vmin is None and spec.vmax is None:
+        # GRACE anomaly scale is always zero-centered and symmetric:
+        # brown = drier than the 2004–2009 mean, blue = wetter. The
+        # bound is the largest absolute finite anomaly across all
+        # frames (gap months are all-NaN and contribute nothing).
+        finite = values[np.isfinite(values)]
+        bound = float(np.max(np.abs(finite))) if finite.size else 1.0
+        if not bound > 0.0:
+            bound = 1.0
+        vmin, vmax = -bound, bound
+    else:
+        vmin = spec.vmin if spec.vmin is not None else float(np.nanmin(values))
+        vmax = spec.vmax if spec.vmax is not None else float(np.nanmax(values))
+        if not vmin < vmax:
+            vmax = vmin + 1.0  # degenerate constant field: avoid a zero-range cmap
 
     st = _STYLE[style]
     var_cmap = _VARIABLE_CMAPS.get(spec.variable, st["cmap"])
@@ -480,6 +531,7 @@ def render_viz(
 
     frames: List[str] = []
     timestamps: List[str] = []
+    gap_flags: List[bool] = []
     lon_min, lat_min, lon_max, lat_max = spec.bbox
 
     for n, i in enumerate(frame_idx):
@@ -509,6 +561,13 @@ def render_viz(
             for seg in coastline_segs:
                 ax_m.plot(seg["lons"], seg["lats"], color=coast_color,
                           lw=1.2, zorder=5, solid_capstyle="round")
+        # GRACE gap months (e.g. the 2017–2018 inter-mission gap) are
+        # all-NaN frames: they are never interpolated, and the frame is
+        # visibly marked instead of rendering as an empty map.
+        is_gap_frame = spec.variable == "water-storage" and bool(
+            np.all(np.isnan(grid)))
+        if is_gap_frame:
+            _draw_gap_panel(ax_m, st)
         ax_m.set_xlim(lon_min, lon_max)
         ax_m.set_ylim(lat_min, lat_max)
         ax_m.tick_params(colors=st["muted"], labelsize=14)
@@ -597,6 +656,13 @@ def render_viz(
         ov = list(getattr(spec, "overlays", ()))
         if ov:
             footer_var += " + " + " + ".join(f"{o} contours" for o in ov)
+        if spec.variable == "water-storage":
+            # The anomaly baseline is part of the data's identity:
+            # every value is vs the 2004–2009 time-mean removed by CSR.
+            footer_var += " · anomaly vs 2004–2009 mean"
+            n_gaps = sum(gap_flags)
+            if n_gaps:
+                footer_var += f" · {n_gaps} month{'s' if n_gaps != 1 else ''} with no GRACE data"
         _draw_footer(fig, spec, st, footer_var)
 
         frame_path = out / f"frame_{n + 1:04d}.png"
@@ -604,6 +670,7 @@ def render_viz(
         plt.close(fig)
         frames.append(str(frame_path.resolve()))
         timestamps.append(frame_date.isoformat())
+        gap_flags.append(is_gap_frame)
 
     manifest = {
         "schema": SCHEMA_ID,
@@ -620,6 +687,15 @@ def render_viz(
             "engine": f"survey-viz {__version__}",
             "created": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "underlay": underlay_status,
+            # GRACE provenance: the anomaly baseline is part of the
+            # data's identity, and gap months are listed explicitly
+            # (they render as NO GRACE OBSERVATION panels).
+            "anomaly_baseline": (
+                "2004–2009 time-mean removed (CSR RL06.3 "
+                "time_mean_removed 2004.000–2009.999)"
+                if spec.variable == "water-storage" else None),
+            "gap_months": [ts for ts, gap in zip(timestamps, gap_flags)
+                           if gap] or None,
         },
     }
     manifest_path = out / "manifest.json"

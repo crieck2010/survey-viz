@@ -42,6 +42,18 @@ Routing rules (documented in docs/PARSER.md):
   best tracks, pinned by the parser with an inspectable
   ``source_reason`` — the archive is global, so no regional
   restriction applies).
+* ``"water-storage"`` anywhere -> ``"grace"`` (CSR GRACE/GRACE-FO
+  RL06.3 terrestrial water storage anomalies, monthly, cm LWE,
+  land-only — the archive is global, so no regional restriction
+  applies).
+* ``"streamflow"`` (river discharge) has no fetch adapter -> ``""``:
+  no river-discharge adapter exists yet (streamgages are item 11 of
+  the remote-sensing program), so it is refused rather than
+  misrendered.
+* ``"sea-level"`` (without "pressure") has no fetch adapter ->
+  ``""``: sea level is satellite altimetry, a different observable
+  from GRACE terrestrial water storage, so it is refused rather than
+  answered with a GRACE map.
 * ``"chlorophyll"``, ``"burn-scar"``, ``"land-ice"``, and
   ``"power-outage"`` have no fetch adapter -> ``""`` (callers turn this
   into the honest "no adapter" refusal they already produce;
@@ -100,6 +112,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "blackmarble": "NASA Black Marble VNP46A2",
     "gebco": "GEBCO 2024",
     "ibtracs": "NOAA IBTrACS v04r01",
+    "grace": "CSR GRACE/GRACE-FO RL06.3",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -117,6 +130,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "blackmarble": ("currents.blackmarble", "fetch_blackmarble"),
     "gebco": ("currents.basemaps", "fetch_gebco"),
     "ibtracs": ("currents.storms", "fetch_ibtracs"),
+    "grace": ("currents.grace", "fetch_grace"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -134,6 +148,7 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "blackmarble": "0.9.0",
     "gebco": "0.10.0",
     "ibtracs": "0.11.0",
+    "grace": "0.12.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -161,8 +176,9 @@ def default_source(variable: str, region_key: str) -> str:
     currents stay an honest refusal), ``"firms"`` for ``fire`` in any
     region (the FIRMS area API is global), ``"nsidc"`` for ``sea-ice``
     in the polar regions only (mid-latitude sea ice has no ice domain
-    in the product), and ``""`` when no adapter exists
-    (``chlorophyll``, ``burn-scar`` — burned-area / burn-severity
+    in the product), ``"grace"`` for ``"water-storage"`` in any region
+    (the CSR mascon archive is global), and ``""`` when no adapter
+    exists (``chlorophyll``, ``burn-scar`` — burned-area / burn-severity
     mapping is survey-burn's future domain, not FIRMS; ``land-ice`` —
     glaciers / ice sheets / icebergs are a different physical product
     from sea-ice concentration).
@@ -200,6 +216,19 @@ def default_source(variable: str, region_key: str) -> str:
     # so there is no regional restriction.
     if variable == "storm-tracks":
         return "ibtracs"
+    # "water-storage" routes globally to GRACE — the CSR RL06.3 mascon
+    # archive is global and land-only (oceans masked), so there is no
+    # regional restriction. Precipitation wording NEVER routes to
+    # GRACE: "rainfall"/"precipitation" stay on "tp" (IMERG/ERA5) via
+    # the parser's variable race.
+    if variable == "water-storage":
+        return "grace"
+    # "streamflow" (river discharge) has no adapter: streamgages are
+    # item 11 of the remote-sensing program, so it is refused rather
+    # than misrendered. "sea-level" (without "pressure") has no
+    # adapter either: sea level is satellite altimetry, a different
+    # observable from GRACE terrestrial water storage — refusing keeps
+    # the parser from answering it with a GRACE map.
     # "power-outage" (blackout / power-outage wording) has no adapter:
     # outage mapping is temporal change detection across two or more
     # epochs, and a single daily Black Marble map cannot show it — so
@@ -260,6 +289,16 @@ def _explain_refusal(variable: str, region_key: str) -> str:
                 "as a map underlay (see docs/BASEMAPS.md), never as the "
                 "visualization itself, so 'country borders' alone is "
                 "refused rather than rendered as an empty map.")
+    if variable == "streamflow":
+        return ("no source: no river-discharge / streamflow adapter exists "
+                "yet — USGS streamgages are item 11 of the remote-sensing "
+                "program (see docs/ROADMAP in earthwatch-suite), so "
+                "'streamflow' is refused rather than misrendered.")
+    if variable == "sea-level":
+        return ("no source: 'sea-level' is satellite altimetry — a "
+                "different observable from GRACE terrestrial water "
+                "storage — and no sea-level adapter exists, so it is "
+                "refused rather than answered with a GRACE map.")
     return f"no source: no fetch adapter exists for variable {variable!r}."
 
 
@@ -294,6 +333,9 @@ def explain_source(spec: Any) -> str:
                  "(15 arc-second, static compilation)",
         "ibtracs": "storm tracks/identity -> NOAA IBTrACS v04r01 best "
                    "tracks (global archive)",
+        "grace": "water storage / groundwater -> CSR GRACE/GRACE-FO "
+                 "RL06.3 terrestrial water storage anomalies (monthly, "
+                 "cm LWE, land-only)",
     }.get(source, f"variable {variable!r}")
     return (f"source {source!r} ({label}): regional default — {default_why}; "
             "the parser did not pin a source.")

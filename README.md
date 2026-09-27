@@ -132,7 +132,13 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   `source_reason`. `storm-tracks` always pins `source="ibtracs"` (NOAA
   IBTrACS v04r01 tropical-cyclone best tracks, 1980–present, keyless —
   `survey-currents` v0.11.0+) with an inspectable `source_reason`
-  (see docs/STORMS.md). Whenever the parser pins a source it
+  (see docs/STORMS.md). `water-storage` always pins `source="grace"`
+  (CSR GRACE/GRACE-FO RL06.3 terrestrial water storage anomalies —
+  monthly, cm LWE, land-only, 2002–present, keyless —
+  `survey-currents` v0.12.0+) with an inspectable `source_reason`
+  (see docs/WATER.md); "sea level" (without "pressure") and "river
+  discharge" are honest no-adapter refusals, never GRACE maps.
+  Whenever the parser pins a source it
   records `VizSpec.source_reason`, and
   `viz.sources.explain_source(spec)` explains any spec's routing
   (pinned, default, or refused).

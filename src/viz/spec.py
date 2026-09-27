@@ -20,7 +20,15 @@ KNOWN_VARIABLES = ("sst", "currents", "chlorophyll",
                    "night-lights", "power-outage",
                    "bathymetry", "elevation",
                    "country-borders",
-                   "storm-tracks")
+                   "storm-tracks",
+                   # --- GRACE (survey-currents v0.12.0+, source "grace") ---
+                   "water-storage",
+                   # Refusal-only variables (documented, no fetch adapter):
+                   # "streamflow" (no river-discharge adapter yet —
+                   # streamgages are item 11 of the remote-sensing
+                   # program) and "sea-level" (satellite altimetry, a
+                   # different observable from GRACE TWS).
+                   "streamflow", "sea-level")
 KNOWN_CADENCES = ("daily", "monthly", "yearly")
 KNOWN_LAYOUTS = ("reel-vertical",)
 KNOWN_STYLES = ("reel-dark", "light")
@@ -28,7 +36,8 @@ KNOWN_STYLES = ("reel-dark", "light")
 #: resolve the regional default at fetch time" (v0.1.0 specs have no
 #: source and keep working unchanged).
 KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5", "oscar", "cmems-currents",
-                 "firms", "nsidc", "imerg", "blackmarble", "gebco", "ibtracs")
+                 "firms", "nsidc", "imerg", "blackmarble", "gebco", "ibtracs",
+                 "grace")
 #: Variables that may appear in ``VizSpec.overlays`` (drawn as contour
 #: overlays over the base variable, e.g. isobars over a wind map).
 KNOWN_OVERLAYS = ("wind", "msl", "t2m", "tp")

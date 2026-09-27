@@ -387,6 +387,45 @@ Examples:
 - "rainfall over the Gulf of Mexico" → `variable="tp"`, `source=""` →
   resolves to `era5` (regional default; `explain_source` says so)
 
+### 6d. Water storage (GRACE) vs precipitation, discharge, sea level
+
+`variable="water-storage"` always pins `source="grace"`: **CSR
+GRACE/GRACE-FO RL06.3** — monthly terrestrial water storage anomalies
+in cm of liquid-water-equivalent thickness, land-only, the 2004–2009
+time-mean removed, 2002–present, keyless (survey-currents v0.12.0+),
+with an inspectable `source_reason`. Water-storage keywords:
+"water storage", "groundwater", "aquifer", "terrestrial water",
+"total water storage", "GRACE", "GRACE-FO", "TWS", "drought". Cadence
+is always monthly (the product is a monthly product). Full rules in
+docs/WATER.md.
+
+- "Groundwater decline in California over the past 5 years" →
+  `variable="water-storage"`, `source="grace"`, monthly.
+- "Total water storage across California since 2002" →
+  `variable="water-storage"`, `source="grace"`.
+- "Groundwater decline vs rainfall in California over the past 5
+  years" → `variable="water-storage"`, `source="grace"`,
+  `overlays=("tp",)` — GRACE stays the base map; "vs rainfall" /
+  "with rainfall" wording adds precipitation as a contour overlay
+  (the pipeline fetches it as context; it degrades to an "absent"
+  manifest status when unavailable).
+- **Precipitation never routes to GRACE.** "Recent satellite rainfall
+  over the Gulf of Mexico" → `variable="tp"`, `source="imerg"` (not
+  GRACE) — rain/precipitation keep their own earliest-wins race to
+  `"tp"`; only a `water-storage` primary win can add `"tp"` as an
+  overlay.
+- **River discharge is refused.** "River discharge in California
+  this year" → `variable="streamflow"`, which has no fetch adapter
+  (USGS streamgages are item 11 of the remote-sensing program) — an
+  honest no-adapter refusal naming the future adapter, never a GRACE
+  map.
+- **Sea level is refused.** "Sea level in California" →
+  `variable="sea-level"`, which has no fetch adapter — sea level is
+  satellite altimetry, a different observable from GRACE terrestrial
+  water storage. "Sea level pressure", however, keeps its `msl`
+  (ERA5) reading: the sea-level patterns carry a negative lookahead
+  that fails on "pressure".
+
 ## 7. Failure mode
 
 `UnparseableDescription` messages contain:

@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-09-27
+
+### Added
+- GRACE terrestrial water storage (`KNOWN_VARIABLES +=
+  ("water-storage", "streamflow", "sea-level")`,
+  `KNOWN_SOURCES += ("grace",)`):
+  - `water-storage` always pins `source="grace"` (CSR GRACE/GRACE-FO
+    RL06.3, `survey-currents` v0.12.0+) with an inspectable
+    `source_reason`; cadence is always monthly. Keywords: "water
+    storage", "groundwater", "aquifer", "terrestrial water", "total
+    water storage", "GRACE", "GRACE-FO", "TWS", "drought" (earliest
+    wins, as usual).
+  - Combination requests: "groundwater decline vs rainfall" keeps
+    GRACE as the base map and adds `overlays=("tp",)` as a
+    precipitation contour overlay (the pipeline fetches it as
+    context; it degrades to an "absent" manifest status when
+    unavailable).
+  - Precipitation never routes to GRACE: "rainfall"/"precipitation"
+    keep their `tp` race (IMERG/ERA5); only a `water-storage` primary
+    win can add `"tp"` as an overlay.
+  - Honest refusals, never GRACE maps: `variable="streamflow"` ("river
+    discharge" — no adapter yet; USGS streamgages are item 11 of the
+    remote-sensing program) and `variable="sea-level"` (satellite
+    altimetry, a different observable from GRACE TWS). "Sea level
+    pressure" keeps its `msl` (ERA5) reading via a negative lookahead.
+  - Rendering: zero-centered symmetric `BrBG` diverging scale (brown
+    = drier than the 2004–2009 mean, blue = wetter; explicit
+    `vmin`/`vmax` still win), units "cm", gap months render as
+    **"NO GRACE OBSERVATION"** panels (never interpolated), footer
+    and manifest carry the anomaly baseline and the gap-month list.
+  - New docs: `docs/WATER.md` (routing, parser rules, rendering,
+    pipeline contract, limitations); `docs/PARSER.md` §6d.
+  - 22 new tests (parser routing + refusals, source registry, render
+    scale/gap/manifest).
+
 ## [0.10.0] - 2026-09-27
 
 ### Added
