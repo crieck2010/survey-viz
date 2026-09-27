@@ -280,5 +280,95 @@ def test_gulf_stream_region_registered():
     r = get_region("gulf-stream")
     assert r is not None
     assert tuple(r["bbox"]) == (-81.0, 25.0, -55.0, 43.0)
-    # 35 regions: 34 from v0.3.0 + gulf-stream.
-    assert len(load_regions()) == 35
+    # 40 regions: 35 from v0.4.0 + 5 fire regions (v0.5.0).
+    assert len(load_regions()) == 40
+
+
+# --- FIRMS / fire routing (v0.5.0) ----------------------------------------------
+
+def test_default_source_fire_any_region():
+    from viz.sources import default_source
+    assert default_source("fire", "california") == "firms"
+    assert default_source("fire", "amazon-basin") == "firms"
+    assert default_source("fire", "global") == "firms"
+    assert default_source("fire", "lake-superior") == "firms"
+
+
+def test_default_source_burn_scar_empty():
+    from viz.sources import default_source
+    assert default_source("burn-scar", "california") == ""
+    assert default_source("chlorophyll", "california") == ""
+
+
+def test_resolve_source_fire_firms():
+    from viz.sources import resolve_source
+    from viz.spec import VizSpec
+    import datetime as dt
+    spec = VizSpec(
+        title="t", region_key="california",
+        bbox=(-124.5, 32.5, -114.0, 42.0), variable="fire",
+        start=dt.date(2020, 1, 1), end=dt.date(2022, 12, 31),
+        cadence="daily", layout="reel-vertical", style="reel-dark",
+        source="", overlays=(),
+    )
+    assert resolve_source(spec) == "firms"
+
+
+def test_is_fetchable_fire():
+    from viz.sources import is_fetchable
+    from viz.spec import VizSpec
+    import datetime as dt
+    def _spec(variable):
+        return VizSpec(
+            title="t", region_key="california",
+            bbox=(-124.5, 32.5, -114.0, 42.0), variable=variable,
+            start=dt.date(2020, 1, 1), end=dt.date(2022, 12, 31),
+            cadence="daily", layout="reel-vertical", style="reel-dark",
+            source="", overlays=(),
+        )
+    assert is_fetchable(_spec("fire"))
+    assert not is_fetchable(_spec("burn-scar"))
+
+
+def test_source_labels_for_firms():
+    from viz.sources import SOURCE_LABELS
+    assert SOURCE_LABELS["firms"] == "NASA FIRMS"
+
+
+def test_fetch_for_source_firms_lazy_imports(monkeypatch):
+    import sys, types
+    from viz import sources
+    calls = []
+
+    def fake_import(name):
+        calls.append(name)
+        mod = types.ModuleType(name)
+        mod.fetch_firms = lambda *a, **k: "FIRMS-FIELD"
+        return mod
+
+    monkeypatch.setattr("importlib.import_module", fake_import)
+    fn = sources.fetch_for_source("firms")
+    assert fn() == "FIRMS-FIELD"
+    assert calls == ["currents.fires"]
+
+
+def test_fetch_for_source_firms_missing_peer_is_actionable(monkeypatch):
+    import importlib
+    from viz import sources
+
+    def boom(name):
+        raise ImportError("No module named 'currents'")
+
+    monkeypatch.setattr(importlib, "import_module", boom)
+    with __import__("pytest").raises(ImportError) as excinfo:
+        sources.fetch_for_source("firms")
+    msg = str(excinfo.value)
+    assert "survey-currents>=0.6.0" in msg
+    assert "currents.fires.fetch_firms" in msg
+
+
+def test_known_variables_include_fire_and_burn_scar():
+    from viz.spec import KNOWN_VARIABLES, KNOWN_SOURCES
+    assert "fire" in KNOWN_VARIABLES
+    assert "burn-scar" in KNOWN_VARIABLES
+    assert "firms" in KNOWN_SOURCES

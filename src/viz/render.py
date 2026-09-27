@@ -65,6 +65,12 @@ _VARIABLE_UNITS = {
     "msl": "hPa",
     "t2m": "°C",
     "tp": "mm",
+    # FIRMS active fires (survey-currents v0.6.0+, source "firms"):
+    # daily detection counts per grid cell ("burn-scar" has no adapter
+    # and is never rendered — the unit is registered only so a spec
+    # carrying it degrades gracefully in messages).
+    "fire": "detections",
+    "burn-scar": "",
 }
 
 #: Contour defaults per overlay variable: contour every ``step`` units,

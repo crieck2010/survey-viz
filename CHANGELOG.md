@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-26
+
+### Added
+- FIRMS active-fire source routing for the new survey-currents v0.6.0
+  adapter (`KNOWN_SOURCES += ("firms",)`, `KNOWN_VARIABLES += ("fire",
+  "burn-scar")`): `VizSpec.source` may now be `"firms"` (NASA FIRMS
+  active-fire detections, 2000–present, free MAP_KEY, lazily imported
+  from `currents.fires.fetch_firms`). Minimum survey-currents version
+  for `firms` is 0.6.0 (the per-source minimum-version table in
+  `viz.sources` now drives the honest upgrade message).
+- Default routing for `variable="fire"`: **any** region resolves to
+  `"firms"` (the FIRMS area API is global) — no region-key gating.
+- Parser: `fire`/`fires`/`wildfire(s)`/`burning`/`burn(s)` keywords;
+  fire specs default to `cadence="daily"` (fires are fast phenomena;
+  monthly bucketing would show one day per month). New fire gazetteer
+  regions (40 total): `california`, `pacific-northwest`, `amazon-basin`,
+  `australia-southeast`, `boreal-canada`.
+- **Burn-scar disambiguation (documented in `docs/PARSER.md` §2):**
+  "burn scar(s)" / "burned area(s)" / "burn severity" parse to
+  `variable="burn-scar"` — which wins ties against `fire` ("burn scar"
+  matches both groups at the same position) but has **no fetch
+  adapter**: FIRMS is active-fire *detections* only, and burned-area /
+  burn-severity mapping is survey-burn's future imagery adapter.
+  `default_source` returns `""` for it, so it becomes an honest
+  no-adapter refusal naming survey-burn — never a silent misroute to
+  fire detections (the `chlorophyll` precedent).
+- Renderer: fires render through the existing scalar path with zero
+  changes — `FireField.to_density_grid()` produces the plain
+  `times`/`lats`/`lons`/`values` dict the renderer already consumes
+  (daily fire-count grids, colorbar unit "detections"). Per-detection
+  point markers (dots) are deliberately deferred to a later version:
+  they need a per-frame points channel in the render dict form, and
+  half-plumbing it now would complicate the density path.
+
+### Tests
+- 17 new tests (parser fire/burn-scar keywords, tie-break, daily
+  cadence, new regions; sources fire/burn-scar routing, firms lazy
+  import, min-version message). Region count updated to 40.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added

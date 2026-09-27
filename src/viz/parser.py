@@ -29,7 +29,23 @@ class UnparseableDescription(ValueError):
 # Each group maps to a VizSpec.variable value. When keywords from several
 # groups appear, the group whose keyword occurs EARLIEST in the text wins
 # (documented in docs/PARSER.md). No keyword at all -> "sst" (documented default).
+#
+# "burn-scar" is listed FIRST so it wins ties against "fire": "burn scar"
+# matches both ``burns?`` (fire) and ``burn[ -]?scars?`` (burn-scar) at
+# the same position, and the scar reading is the honest one — it has no
+# fetch adapter yet (see viz.sources.default_source).
 _VARIABLE_PATTERNS = {
+    "burn-scar": [
+        r"burn[ -]?scars?",
+        r"burned[ -]?areas?",
+        r"burn[ -]?severity",
+    ],
+    "fire": [
+        r"wildfires?",
+        r"\bfires?\b",
+        r"\bburning\b",
+        r"\bburns?\b",
+    ],
     "currents": [
         r"currents?",
         r"flows?",
@@ -107,6 +123,8 @@ _VARIABLE_LABELS = {
     "msl": "Sea-Level Pressure",
     "t2m": "2-m Air Temperature",
     "tp": "Precipitation",
+    "fire": "Active Fires",
+    "burn-scar": "Burn Scar",
 }
 
 # --- time phrases ------------------------------------------------------------
@@ -354,7 +372,9 @@ def parse_description(
         variable=variable,
         start=start,
         end=end,
-        cadence="monthly",
+        # Fires are fast phenomena: a fire reel wants one frame per day,
+        # not one representative day per month (v0.5.0).
+        cadence="daily" if variable == "fire" else "monthly",
         layout="reel-vertical",
         style="reel-dark",
         source=_parse_source(normalized, variable),

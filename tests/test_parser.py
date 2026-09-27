@@ -184,3 +184,65 @@ def test_non_great_lakes_region_parses():
     spec = parse_description("Mediterranean Sea sst 2015 to 2020", today=TODAY)
     assert spec.region_key == "mediterranean-sea"
     assert spec.bbox == (-6.0, 30.0, 36.5, 46.0)
+
+
+# --- fire / burn-scar (v0.5.0) -------------------------------------------------
+
+def test_variable_fire_basic():
+    spec = parse_description("California wildfires last summer", today=TODAY)
+    assert spec.variable == "fire"
+    assert spec.region_key == "california"
+    assert spec.cadence == "daily"  # fires render daily, not monthly
+
+
+def test_fire_regions_parse():
+    for text, key in [
+        ("California fires 2020 to 2022", "california"),
+        ("Pacific Northwest wildfires this year", "pacific-northwest"),
+        ("Amazon burning 2019 to 2021", "amazon-basin"),
+        ("Southeastern Australia fires last summer", "australia-southeast"),
+        ("Boreal Canada wildfires since 2020", "boreal-canada"),
+    ]:
+        assert parse_description(text, today=TODAY).region_key == key
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Mediterranean burn scars 2020 to 2024",
+        "California burned area last summer",
+        "Amazon burn severity this year",
+    ],
+)
+def test_variable_burn_scar_wins_tie_with_fire(text):
+    # "burn scar" matches both the fire and burn-scar groups at the same
+    # position; the scar reading must win (FIRMS is detections-only).
+    spec = parse_description(text, today=TODAY)
+    assert spec.variable == "burn-scar"
+
+
+def test_burn_scar_earliest_wins_still_applies():
+    # An earlier fire keyword keeps the fire reading.
+    spec = parse_description(
+        "California wildfires and burn scars 2020 to 2022", today=TODAY)
+    assert spec.variable == "fire"
+
+
+def test_fire_title_label():
+    spec = parse_description("California wildfires 2020 to 2022", today=TODAY)
+    assert spec.title == "California — Active Fires, 2020–2022"
+
+
+def test_fire_cadence_daily_others_monthly():
+    assert parse_description(
+        "California wildfires 2020 to 2022", today=TODAY).cadence == "daily"
+    assert parse_description(
+        "California sst 2020 to 2022", today=TODAY).cadence == "monthly"
+
+
+def test_fire_does_not_pin_source():
+    spec = parse_description(
+        "California ultra high resolution wildfires 2020 to 2022",
+        today=TODAY)
+    assert spec.variable == "fire"
+    assert spec.source == ""  # no quality pinning for fires; default -> firms

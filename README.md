@@ -64,22 +64,28 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
 ## Parser rules (summary)
 
 - **Region**: gazetteer display names/aliases, case-insensitive, longest match wins.
-  35 regions: the 5 Great Lakes + 21 coastal regions/bays/seas + 8 ocean
-  basins + the Gulf Stream (`data/regions.yaml`).
+  40 regions: the 5 Great Lakes + 21 coastal regions/bays/seas + 8 ocean
+  basins + the Gulf Stream + 5 fire regions (`data/regions.yaml`).
 - **Variable**: `temperature/sst/thermal/warmth/cold` → `sst`;
   `current/flow/stream/velocity/eddy/eddies` → `currents`; `chlorophyll/chl/algae/bloom` →
   `chlorophyll`; **wind(s)/windy/gale(s)** → `wind`; **pressure/isobar(s)** →
   `msl`; **air temperature/heatwave/heat** → `t2m`;
-  **rain/rainfall/precipitation/deluge** → `tp`. Earliest keyword in the
-  text wins; **no keyword → `sst`**. **Storms** (`storm/cyclone/hurricane/
-  typhoon`) → `wind` + pressure-isobar overlay.
+  **rain/rainfall/precipitation/deluge** → `tp`;
+  **fire(s)/wildfire(s)/burning/burn(s)** → `fire` (NASA FIRMS active-fire
+  detections); **burn scar(s)/burned area(s)/burn severity** →
+  `burn-scar` (parses, but has no fetch adapter — honest refusal naming
+  survey-burn as the future home). Earliest keyword in the
+  text wins (`burn-scar` wins ties against `fire`); **no keyword → `sst`**.
+  **Storms** (`storm/cyclone/hurricane/typhoon`) → `wind` + pressure-isobar overlay.
 - **Source pinning** (new in v0.2.0): `high resolution` / `ultra` /
   `coastal detail` / `1 km` + SST → `source="mur"` (NASA JPL MUR v4.1,
   ~1 km). Otherwise `source` stays empty and
   `viz.sources.resolve_source` picks the regional default: Great Lakes
   SST → `glsea`, other SST → `oisst`, `wind`/`msl`/`t2m`/`tp` anywhere →
   `era5` (Copernicus ERA5 reanalysis, needs a free CDS account —
-  `survey-currents` v0.4.0+).
+  `survey-currents` v0.4.0+), non-Great-Lakes `currents` → `oscar`
+  (`survey-currents` v0.5.0+), `fire` anywhere → `firms` (NASA FIRMS
+  active fires, needs a free MAP_KEY — `survey-currents` v0.6.0+).
 - **Time**: `past N years`, `last N years`, `past N months`, `last summer`
   (most recent fully-completed Jun–Aug), `this year`, `2015 to 2020` /
   `2015-2020`, `since 2018`. **No time phrase → past 1 year.**
@@ -92,9 +98,12 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
 
 - **Fetchable**: the 5 Great Lakes via GLSEA; other SST via OISST (default)
   or MUR (high-resolution requests); `wind`/`msl`/`t2m`/`tp` via ERA5 in
-  any region (needs a free CDS account) — all through `survey-currents`
-  (v0.4.0+ for ERA5). `currents` and `chlorophyll` still have no fetch
-  adapter: fetching them raises a clear "no adapter yet" error. See
+  any region (needs a free CDS account); `currents` via OSCAR (needs a
+  free Earthdata Login) except the Great Lakes; `fire` via FIRMS in any
+  region (needs a free FIRMS MAP_KEY) — all through `survey-currents`
+  (v0.6.0+ for FIRMS). `chlorophyll` and `burn-scar` still have no fetch
+  adapter: they parse but raise a clear "no adapter yet" error
+  (burn-scar's message points at survey-burn as the future adapter). See
   `viz.sources.resolve_source()` and the `notes` field in
   `data/regions.yaml`.
 - The map panel is a plain `pcolormesh` over the region bbox — no coastlines

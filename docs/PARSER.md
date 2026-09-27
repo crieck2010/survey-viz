@@ -41,12 +41,30 @@ san-francisco-bay.
 | `msl` *(ERA5)* | pressure(s), isobar(s), sea-level pressure |
 | `t2m` *(ERA5)* | air temperature(s), atmospheric temperature(s), heatwave(s), **heat** |
 | `tp` *(ERA5)* | rain, rainfall, precipitation, deluge(s), downpour(s) |
+| `fire` *(FIRMS)* | fire(s), wildfire(s), burning, burn(s) |
+| `burn-scar` *(no adapter)* | burn scar(s), burned area(s), burn severity |
 
 Rules:
 
 - **Earliest keyword in the text wins.** "temperature and currents" → `sst`;
   "currents and temperature" → `currents`. (Deterministic, no priority list
   to memorize.)
+- **`burn-scar` wins ties against `fire`.** "burn scar" matches both the
+  `fire` pattern (`burns?`) and the `burn-scar` pattern at the same
+  position; the scar reading wins because FIRMS is active-fire
+  *detections* only — burned-area / burn-severity mapping is
+  `survey-burn`'s future imagery adapter, and the honest refusal (below)
+  names it rather than misrouting to fire detections.
+- **`burn-scar` is an honest refusal, not a fetch.** It parses (so the
+  failure message is precise) but `viz.sources.default_source` returns
+  `""` for it — no adapter exists. Downstream, `reel-studio` refuses
+  with a message pointing at `survey-burn` as the future home of
+  burn-scar mapping. This is the `chlorophyll` precedent: parseable,
+  not fetchable, never silently misrouted.
+- **Fire specs render daily.** `fire` is the one variable whose parser
+  default cadence is `daily` (not `monthly`): fires are fast phenomena,
+  and the FIRMS density grid is one grid per UTC date — monthly
+  bucketing would show only a single day per month.
 - **Storm keywords** (`storm(s)`, `cyclone(s)`, `hurricane(s)`, `typhoon(s)`)
   compete in the same earliest-wins race and map to the
   **`wind` + `overlays=["msl"]` combination**: a wind base map with pressure
@@ -105,14 +123,17 @@ Notes:
 - `title=` kwarg wins when given.
 - Otherwise derived: `{Region Name} — {Variable Label}, {years}`
   - Labels: sst → "Surface Water Temperature", currents → "Surface Currents",
-    chlorophyll → "Chlorophyll-a".
+    chlorophyll → "Chlorophyll-a", wind → "10-m Wind", msl → "Sea-Level Pressure",
+    t2m → "2-m Air Temperature", tp → "Precipitation",
+    fire → "Active Fires", burn-scar → "Burn Scar".
   - Years: `2021–2026` (en dash) across years, or `2026` for a single year.
   - Example: "Lake Superior — Surface Water Temperature, 2021–2026".
 
 ## 5. Cadence / layout / style
 
-The parser always emits `cadence="monthly"`, `layout="reel-vertical"`,
-`style="reel-dark"`. (Finer control belongs to the spec/CLI layer, not to
+The parser always emits `layout="reel-vertical"`, `style="reel-dark"`,
+and `cadence="monthly"` — except for `fire`, which emits
+`cadence="daily"`. (Finer control belongs to the spec/CLI layer, not to
 free text.)
 
 ## 6. Source pinning (quality keywords)
@@ -132,9 +153,12 @@ SST over the 5 Great Lakes → `glsea`, SST anywhere else → `oisst`,
 `wind`/`msl`/`t2m`/`tp` anywhere → `era5` (Copernicus ERA5 reanalysis via
 the CDS API — fetchable in **any** region), `currents` anywhere except
 the 5 Great Lakes → `oscar` (NASA PODAAC OSCAR v2.0 — fetchable in any
-non-Great-Lakes region, including the 35th region, `gulf-stream`).
-Great Lakes `currents` and `chlorophyll` have no adapter → `""`, and
-`is_fetchable` refuses them honestly.
+non-Great-Lakes region, including the 35th region, `gulf-stream`),
+`fire` anywhere → `firms` (NASA FIRMS — fetchable in **any** region,
+including the 5 new fire regions: `california`, `pacific-northwest`,
+`amazon-basin`, `australia-southeast`, `boreal-canada`).
+Great Lakes `currents`, `chlorophyll`, and `burn-scar` have no adapter
+→ `""`, and `is_fetchable` refuses them honestly.
 
 Examples:
 
@@ -157,6 +181,14 @@ Examples:
 - "ultra high resolution currents in the Caribbean" →
   `variable="currents"`, `region_key="caribbean-sea"`,
   `source="cmems-currents"` (CMEMS global ocean physics)
+- "California wildfires last summer" → `variable="fire"`,
+  `region_key="california"`, `cadence="daily"`, `source=""` →
+  resolves to `firms` (NASA FIRMS active-fire detections)
+- "Amazon burning since 2019" → `variable="fire"`,
+  `region_key="amazon-basin"`, `source=""` → `firms`
+- "Mediterranean burn scars 2020 to 2024" → `variable="burn-scar"` →
+  honest refusal (no adapter; burn-severity mapping is survey-burn's
+  future domain, not FIRMS)
 
 ## 7. Failure mode
 

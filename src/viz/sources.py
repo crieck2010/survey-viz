@@ -19,9 +19,12 @@ Routing rules (documented in docs/PARSER.md):
   ``wind``/``msl``/``t2m``/``tp`` anywhere -> ``"era5"``; ``currents``
   anywhere except the 5 Great Lakes -> ``"oscar"`` (Great Lakes
   ``currents`` stays an honest refusal — no lake-scale current adapter
-  exists).
-* ``"chlorophyll"`` has no fetch adapter -> ``""`` (callers turn this
-  into the honest "no adapter" refusal they already produce).
+  exists); ``fire`` anywhere -> ``"firms"`` (the FIRMS area API is
+  global).
+* ``"chlorophyll"`` and ``"burn-scar"`` have no fetch adapter -> ``""``
+  (callers turn this into the honest "no adapter" refusal they already
+  produce; burn-scar / burn-severity mapping belongs to survey-burn's
+  future imagery adapter, not FIRMS).
 
 Note: the ``"era5"`` adapter is ``currents.era5.fetch_era5``, whose first
 argument is the variable list — ``fetch_for_source("era5")`` returns the
@@ -53,6 +56,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "era5": "Copernicus ERA5 (CDS)",
     "oscar": "NASA PODAAC OSCAR v2.0",
     "cmems-currents": "CMEMS Global Ocean Physics (daily)",
+    "firms": "NASA FIRMS",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -64,6 +68,19 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "era5": ("currents.era5", "fetch_era5"),
     "oscar": ("currents.currents_global", "fetch_oscar"),
     "cmems-currents": ("currents.currents_global", "fetch_cmems_currents"),
+    "firms": ("currents.fires", "fetch_firms"),
+}
+
+#: Minimum survey-currents version providing each adapter (used for the
+#: honest upgrade message in fetch_for_source).
+_SOURCE_MIN_VERSIONS: Dict[str, str] = {
+    "glsea": "0.2.0",
+    "oisst": "0.3.0",
+    "mur": "0.3.0",
+    "era5": "0.4.0",
+    "oscar": "0.5.0",
+    "cmems-currents": "0.5.0",
+    "firms": "0.6.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -82,8 +99,10 @@ def default_source(variable: str, region_key: str) -> str:
     SST anywhere else, ``"era5"`` for the ERA5 variables
     (``wind``/``msl``/``t2m``/``tp``) in any region, ``"oscar"`` for
     ``currents`` in any region except the 5 Great Lakes (Great Lakes
-    currents stay an honest refusal), and ``""`` when no adapter
-    exists (``chlorophyll``).
+    currents stay an honest refusal), ``"firms"`` for ``fire`` in any
+    region (the FIRMS area API is global), and ``""`` when no adapter
+    exists (``chlorophyll``, ``burn-scar`` — burned-area / burn-severity
+    mapping is survey-burn's future domain, not FIRMS').
     """
     variable = str(variable)
     if variable == "sst":
@@ -96,6 +115,8 @@ def default_source(variable: str, region_key: str) -> str:
         if str(region_key) in _great_lakes_keys():
             return ""
         return "oscar"
+    if variable == "fire":
+        return "firms"
     return ""
 
 
@@ -129,8 +150,7 @@ def fetch_for_source(source: str) -> Callable:
         raise ValueError(
             f"unknown source {source!r}; expected one of {tuple(_SOURCE_ADAPTERS)}")
     module_name, attr = _SOURCE_ADAPTERS[source]
-    min_version = ({"era5": "0.4.0", "oscar": "0.5.0",
-                   "cmems-currents": "0.5.0"}.get(source, "0.3.0"))
+    min_version = _SOURCE_MIN_VERSIONS.get(source, "0.3.0")
     try:
         import importlib
         module = importlib.import_module(module_name)
