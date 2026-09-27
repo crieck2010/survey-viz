@@ -35,6 +35,16 @@ documented regional-median rule) and optional precipitation contour
 context. Empty gage sets render an explicit empty-frame message —
 never fabricated data. See ``docs/STREAMFLOW.md``.
 
+When ``spec.variable == "earthquakes"`` a dedicated quake renderer
+runs: a USGS ``QuakeField`` (or its ``to_dict()`` form) is drawn as
+event markers over the underlay, sized by magnitude (documented power
+law) and colored by hypocentral-depth bin, with a daily event-count
+time-series panel and a largest-events readout. Frames are
+CUMULATIVE: each frame shows all events with time <= that frame date.
+Empty event sets render an explicit empty-frame message — never
+fabricated data. Every manifest records that the catalog is observed
+events, not a forecast hazard model. See ``docs/EARTHQUAKES.md``.
+
 Layout ``"reel-vertical"`` (1080x1920): title block, map panel (pcolormesh,
 fixed vmin/vmax so the colormap never flickers, burned-in timestamp),
 time-series panel with a playhead line + dot synced to the frame date.
@@ -118,6 +128,10 @@ _VARIABLE_UNITS = {
     # field dict) — native ft³/s for discharge (00060), m³/s after
     # to_si(). Registered here so messages degrade gracefully.
     "streamflow": "ft³/s",
+    # USGS Earthquake Catalog (ComCat) quake events
+    # (survey-currents v0.15.0+, source "comcat"): markers are sized by
+    # magnitude (unit "M" — moment/ML/etc. per event mag_type).
+    "earthquakes": "M",
 }
 
 #: Colormaps per variable for the main map panel. Variables not listed
@@ -387,8 +401,14 @@ def _draw_title_block(fig, spec, st, region_name: str) -> None:
     )
 
 
-def _draw_footer(fig, spec, st, footer_var: str) -> None:
-    """Shared footer (map frames and storm-track frames)."""
+def _draw_footer(fig, spec, st, footer_var: str, fontsize: int = 16) -> None:
+    """Shared footer (map frames and storm-track frames).
+
+    ``fontsize`` is 16 everywhere except the earthquakes footer,
+    whose prescribed wording ("N events · largest M{x} · observed
+    events — not a forecast") needs a smaller size to fit the
+    1080 px figure width.
+    """
     ax_f = fig.add_axes([0.0, 0.0, 1.0, 0.06])
     ax_f.axis("off")
     ax_f.set_facecolor(st["face"])
@@ -398,7 +418,7 @@ def _draw_footer(fig, spec, st, footer_var: str) -> None:
         f"{footer_var} · {spec.start.isoformat()} → {spec.end.isoformat()}",
         ha="center",
         va="center",
-        fontsize=16,
+        fontsize=fontsize,
         color=st["muted"],
     )
 
@@ -526,6 +546,11 @@ def render_viz(
 
     if spec.variable == "streamflow":
         return _render_gage_field(
+            spec, field, series, out_dir, layout, style,
+            underlay if underlay is not None else bool(spec.underlay))
+
+    if spec.variable == "earthquakes":
+        return _render_quake_field(
             spec, field, series, out_dir, layout, style,
             underlay if underlay is not None else bool(spec.underlay))
 
@@ -1723,6 +1748,468 @@ def _render_gage_field(spec, field, series, out_dir: str,
             "precipitation_context": tp_context or None,
             "empty": empty,
             "usgs": dict(field_dict.get("provenance", {})),
+        },
+    }
+    manifest_path = out / "manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
+    return frames, str(manifest_path.resolve())
+
+# Quake renderer (variable == "earthquakes", source "comcat")
+# ---------------------------------------------------------------------------
+# Quake events are point/time data, not a scalar grid, so they get a
+# dedicated path modeled on _render_gage_field: markers over the
+# GEBCO/Natural Earth underlay, sized by magnitude and colored by
+# hypocentral-depth bin, with a daily event-count time-series panel
+# below and a largest-events ranking readout. The field arrives as a
+# survey-currents QuakeField (or its to_dict() form — key
+# "quake_events"), passed through directly — never converted through
+# a scalar grid. Frames are CUMULATIVE: frame n shows every event with
+# time <= that frame date (a swarm unfolds over the reel, and a quake
+# stays visible once it has happened). An empty event list renders an
+# explicit empty-frame message (never fabricated markers); every
+# manifest records the catalog honesty note: ComCat is observed
+# events, NOT a forecast hazard model (see docs/EARTHQUAKES.md).
+
+#: Hypocentral-depth bins for marker coloring (standard
+#: seismological bins: shallow < 70 km, intermediate 70–300 km,
+#: deep >= 300 km).
+_QUAKE_DEPTH_BINS = (
+    ("shallow", 0.0, 70.0, "Shallow (<70 km)", "#ffd166"),
+    ("intermediate", 70.0, 300.0, "Intermediate (70–300 km)", "#f4845f"),
+    ("deep", 300.0, float("inf"), "Deep (≥300 km)", "#e5383b"),
+)
+_QUAKE_DEPTH_UNKNOWN = ("unknown", "Unknown depth", "#9aa3b2")
+
+#: Marker-sizing rule (documented, tested): marker AREA (points²) =
+#: _QUAKE_AREA0 * 10 ** (_QUAKE_AREA_EXP * (M - _QUAKE_AREA_REF)).
+#: With the defaults, each +1 magnitude unit multiplies the marker
+#: area by 10**0.75 ≈ 5.62 — a damped visual proxy for seismic-moment
+#: scaling (moment ∝ 10**(1.5*M) would let a great quake swallow the
+#: map). Events with no reported magnitude draw at the fixed
+#: _QUAKE_AREA_UNKNOWN size.
+_QUAKE_AREA0 = 80.0
+_QUAKE_AREA_REF = 4.0
+_QUAKE_AREA_EXP = 0.75
+_QUAKE_AREA_UNKNOWN = 40.0
+
+#: Magnitudes shown as marker chips in the legend.
+_QUAKE_LEGEND_MAGS = (4.0, 5.0, 6.0, 7.0)
+
+#: Honesty note recorded in every earthquakes manifest: the USGS
+#: Earthquake Catalog is a catalog of OBSERVED events, not a forecast
+#: hazard model — so "seismic hazard" descriptions render the
+#: observed catalog, never a hazard forecast.
+_QUAKE_CATALOG_NOTE = (
+    "USGS Earthquake Catalog (ComCat) is a catalog of observed events, "
+    "not a forecast hazard model."
+)
+
+
+def _quake_depth_bin(depth_km: Any) -> Tuple[str, str, str]:
+    """(code, label, color) for a hypocentral depth in km."""
+    if depth_km is None:
+        return _QUAKE_DEPTH_UNKNOWN
+    try:
+        d = float(depth_km)
+    except (TypeError, ValueError):
+        return _QUAKE_DEPTH_UNKNOWN
+    if not d == d or d < 0:
+        return _QUAKE_DEPTH_UNKNOWN
+    for code, lo, hi, label, color in _QUAKE_DEPTH_BINS:
+        if lo <= d < hi:
+            return code, label, color
+    return _QUAKE_DEPTH_UNKNOWN
+
+
+def _quake_marker_area(magnitude: Any) -> float:
+    """Marker area (points²) for a magnitude, per the documented rule.
+
+    Area = ``_QUAKE_AREA0 * 10 ** (_QUAKE_AREA_EXP * (M - _QUAKE_AREA_REF))``;
+    events with no/NaN magnitude draw at ``_QUAKE_AREA_UNKNOWN``.
+    """
+    if magnitude is None:
+        return float(_QUAKE_AREA_UNKNOWN)
+    try:
+        m = float(magnitude)
+    except (TypeError, ValueError):
+        return float(_QUAKE_AREA_UNKNOWN)
+    if not m == m:
+        return float(_QUAKE_AREA_UNKNOWN)
+    return float(_QUAKE_AREA0 * 10.0 ** (_QUAKE_AREA_EXP * (m - _QUAKE_AREA_REF)))
+
+
+def _quake_time(value: Any) -> _dt.datetime:
+    """Parse an event time (datetime/date/ISO string, 'Z' tolerated)."""
+    if isinstance(value, _dt.datetime):
+        return value
+    if isinstance(value, _dt.date):
+        return _dt.datetime(value.year, value.month, value.day,
+                            tzinfo=_dt.timezone.utc)
+    return _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def _normalize_quake_field(field: Any) -> Tuple[List[Dict[str, Any]], int]:
+    """Return (event dicts, n_skipped): parsed event rows with datetimes.
+
+    Accepts the ``"quake_events"`` list from ``QuakeField.to_dict()``
+    (times as ISO strings, missing depths/magnitudes as null) or a
+    live ``QuakeField`` object's ``.events``. Events whose time cannot
+    be parsed are skipped and counted (never guessed at a time).
+    """
+    if isinstance(field, dict):
+        raw = field.get("quake_events", []) or []
+    else:
+        raw = getattr(field, "events", []) or []
+    events: List[Dict[str, Any]] = []
+    skipped = 0
+    for raw_ev in raw:
+        if isinstance(raw_ev, dict):
+            event_id = str(raw_ev.get("event_id", "") or "")
+            time_raw = raw_ev.get("time")
+            lat = raw_ev.get("lat")
+            lon = raw_ev.get("lon")
+            depth_km = raw_ev.get("depth_km")
+            magnitude = raw_ev.get("magnitude")
+            mag_type = str(raw_ev.get("mag_type", "") or "")
+            place = str(raw_ev.get("place", "") or "")
+            event_type = str(raw_ev.get("event_type", "") or "")
+        else:
+            event_id = str(getattr(raw_ev, "event_id", "") or "")
+            time_raw = getattr(raw_ev, "time", None)
+            lat = getattr(raw_ev, "lat", None)
+            lon = getattr(raw_ev, "lon", None)
+            depth_km = getattr(raw_ev, "depth_km", None)
+            magnitude = getattr(raw_ev, "magnitude", None)
+            mag_type = str(getattr(raw_ev, "mag_type", "") or "")
+            place = str(getattr(raw_ev, "place", "") or "")
+            event_type = str(getattr(raw_ev, "event_type", "") or "")
+        try:
+            when = _quake_time(time_raw)
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+        if depth_km is not None:
+            try:
+                depth_km = float(depth_km)
+            except (TypeError, ValueError):
+                depth_km = None
+        if magnitude is not None:
+            try:
+                magnitude = float(magnitude)
+            except (TypeError, ValueError):
+                magnitude = None
+        events.append({
+            "event_id": event_id, "time": when,
+            "lat": (float(lat) if lat is not None else float("nan")),
+            "lon": (float(lon) if lon is not None else float("nan")),
+            "depth_km": depth_km, "magnitude": magnitude,
+            "mag_type": mag_type, "place": place,
+            "event_type": event_type,
+        })
+    return events, skipped
+
+
+def _quake_frame_dates(spec) -> List[_dt.date]:
+    """Frame dates for the quake renderer (cumulative daily display)."""
+    # Reuse the storm renderer's date logic: the daily branch covers
+    # the ComCat daily cadence (cadence is pinned to "daily" by the
+    # parser), capped at MAX_FRAMES by _subsample.
+    return _storm_frame_dates(spec)
+
+
+def _quake_daily_counts(events: List[Dict[str, Any]],
+                        start: _dt.date, end: _dt.date
+                        ) -> Tuple[List[_dt.date], List[int]]:
+    """Daily event counts over [start, end] (documented cumulative rule).
+
+    Events outside the spec window are ignored (never drawn, never
+    counted) — the frame window is the spec's [start, end].
+    """
+    ndays = (end - start).days + 1
+    dates = [start + _dt.timedelta(days=k) for k in range(ndays)]
+    counts = [0] * ndays
+    for ev in events:
+        k = (ev["time"].date() - start).days
+        if 0 <= k < ndays:
+            counts[k] += 1
+    return dates, counts
+
+
+def _quake_largest(events: List[Dict[str, Any]], n: int = 5
+                   ) -> List[Dict[str, Any]]:
+    """Top-``n`` events by magnitude (magnitude None sorts last)."""
+    return sorted(
+        events,
+        key=lambda e: (e["magnitude"] is None,
+                       -(e["magnitude"] or 0.0)),
+    )[:n]
+
+
+def _render_quake_field(spec, field, series, out_dir: str,
+                        layout: str, style: str,
+                        want_underlay: bool) -> Tuple[List[str], str]:
+    """Render USGS Earthquake Catalog events: cumulative quake frames.
+
+    Map panel: one marker per event at its (lon, lat), marker area per
+    the documented magnitude power law, colored by hypocentral-depth
+    bin (shallow < 70 km / intermediate 70–300 km / deep ≥ 300 km).
+    Frames are cumulative: each frame shows every event with time <=
+    that frame date. The lower panels hold the daily event-count
+    time series (with a cumulative playhead) and the largest-events
+    ranking readout (top 5 by magnitude, with place + depth). The
+    GEBCO/Natural Earth underlay draws beneath (topographic context —
+    quake depth is hypocentral, not seafloor); coastlines draw above
+    the tint. An empty event list renders an explicit empty-frame
+    message — never fabricated markers — and every manifest records
+    the catalog honesty note (observed events, not a forecast hazard
+    model).
+    """
+    plt, mdates, np = _require_plotting()
+    from matplotlib.lines import Line2D
+
+    events, n_skipped = _normalize_quake_field(field)
+    frame_dates = _quake_frame_dates(spec)
+    field_dict = field if isinstance(field, dict) else {}
+    prov = field_dict.get("provenance", {}) or {}
+    min_magnitude = field_dict.get("min_magnitude",
+                                   getattr(field, "min_magnitude", None))
+    event_type = field_dict.get("event_type",
+                                getattr(field, "event_type", None))
+
+    underlay_rgba, underlay_extent, coastline_segs, underlay_status = \
+        _fetch_underlay_once(spec, plt, np, want_underlay)
+
+    st = _STYLE[style]
+    region = get_region(spec.region_key)
+    region_name = region["name"] if region else spec.region_key
+    lon_min, lat_min, lon_max, lat_max = spec.bbox
+    start = _coerce_date(spec.start)
+    end = _coerce_date(spec.end)
+    count_dates, count_vals = _quake_daily_counts(events, start, end)
+    cum_vals = [sum(count_vals[:i + 1]) for i in range(len(count_vals))]
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    frames: List[str] = []
+    timestamps: List[str] = []
+    empty = not events
+
+    for n, frame_date in enumerate(frame_dates):
+        # Cumulative display: every event with time <= frame date.
+        shown = [ev for ev in events if ev["time"].date() <= frame_date]
+        # Largest markers first so small markers stay visible on top.
+        shown.sort(key=lambda e: _quake_marker_area(e["magnitude"]),
+                   reverse=True)
+        largest = _quake_largest(shown, 5)
+        cum_now = cum_vals[max(
+            [i for i, d in enumerate(count_dates) if d <= frame_date]
+            or [0])]
+
+        fig = plt.figure(figsize=(10.8, 19.2), dpi=100)
+        fig.patch.set_facecolor(st["face"])
+        _draw_title_block(fig, spec, st, region_name)
+
+        # Map panel ------------------------------------------------------
+        ax_m = fig.add_axes([0.04, 0.52, 0.92, 0.36])
+        ax_m.set_facecolor(st["axes"])
+        if underlay_rgba is not None:
+            ax_m.imshow(underlay_rgba, extent=underlay_extent,
+                        origin="upper", aspect="auto", zorder=1)
+        shown_bins: List[Tuple[str, str]] = []
+        shown_bin_codes = set()
+        if empty:
+            reason = str(prov.get("empty_reason", "") or "")
+            ax_m.text(
+                0.5, 0.55,
+                "No earthquakes in this\ncatalog window",
+                transform=ax_m.transAxes, ha="center", va="center",
+                fontsize=26, weight="bold", color=st["text"],
+                linespacing=1.6)
+            if reason:
+                ax_m.text(0.5, 0.40, reason[:120],
+                          transform=ax_m.transAxes, ha="center",
+                          va="center", fontsize=13, color=st["muted"],
+                          wrap=True)
+        elif not shown:
+            ax_m.text(
+                0.5, 0.55, "No events yet in this window",
+                transform=ax_m.transAxes, ha="center", va="center",
+                fontsize=24, weight="bold", color=st["muted"])
+        else:
+            for ev in shown:
+                if ev["lat"] != ev["lat"] or ev["lon"] != ev["lon"]:
+                    continue  # no location: never plotted
+                bin_code, bin_label, bin_color = _quake_depth_bin(ev["depth_km"])
+                if bin_code not in shown_bin_codes:
+                    shown_bin_codes.add(bin_code)
+                    shown_bins.append((bin_label, bin_color))
+                ax_m.scatter([ev["lon"]], [ev["lat"]],
+                             s=_quake_marker_area(ev["magnitude"]),
+                             c=bin_color, edgecolors="black",
+                             linewidths=1.2, alpha=0.9, zorder=8)
+        if coastline_segs:
+            coast_color = _UNDERLAY_COAST_COLOR[style]
+            for seg in coastline_segs:
+                ax_m.plot(seg["lons"], seg["lats"], color=coast_color,
+                          lw=1.2, zorder=5, solid_capstyle="round")
+        ax_m.set_xlim(lon_min, lon_max)
+        ax_m.set_ylim(lat_min, lat_max)
+        ax_m.tick_params(colors=st["muted"], labelsize=14)
+        for spine in ax_m.spines.values():
+            spine.set_color(st["muted"])
+        # Depth-bin legend (only bins actually shown) + magnitude
+        # marker chips (M4–M7, sized by the documented rule).
+        if shown_bins:
+            handles = [Line2D([0], [0], marker="o", color="w",
+                              markerfacecolor=color, markersize=11,
+                              markeredgecolor="black")
+                       for _, color in shown_bins]
+            labels = [label for label, _ in shown_bins]
+            mag_handles = [Line2D(
+                [0], [0], marker="o", color="w",
+                markerfacecolor="white", markersize=min(
+                    26, max(6, (_quake_marker_area(m) ** 0.5) / 2.4)),
+                markeredgecolor="black") for m in _QUAKE_LEGEND_MAGS]
+            mag_labels = [f"M{m:.0f}" for m in _QUAKE_LEGEND_MAGS]
+            handles.extend(mag_handles)
+            labels.extend(mag_labels)
+            leg = ax_m.legend(handles, labels, loc="lower left",
+                              fontsize=12, framealpha=0.75,
+                              facecolor=st["face"], edgecolor=st["muted"],
+                              ncol=2)
+            for txt in leg.get_texts():
+                txt.set_color(st["text"])
+        # Burned-in timestamp + cumulative count readout.
+        ax_m.text(
+            0.97, 0.03, frame_date.isoformat(), transform=ax_m.transAxes,
+            ha="right", va="bottom", fontsize=22, weight="bold",
+            color="white",
+            bbox=dict(boxstyle="round,pad=0.4", fc="black", ec="none",
+                      alpha=0.55))
+        if not empty:
+            ax_m.text(
+                0.03, 0.97, f"{cum_now} event{'s' if cum_now != 1 else ''}",
+                transform=ax_m.transAxes, ha="left", va="top",
+                fontsize=18, weight="bold", color="white",
+                bbox=dict(boxstyle="round,pad=0.4", fc="black",
+                          ec="none", alpha=0.55))
+
+        # Largest-events ranking panel ------------------------------------
+        ax_r = fig.add_axes([0.04, 0.30, 0.92, 0.20])
+        ax_r.axis("off")
+        ax_r.set_facecolor(st["face"])
+        ax_r.text(0.0, 0.92, "Largest events", ha="left", va="top",
+                  fontsize=22, weight="bold", color=st["text"],
+                  transform=ax_r.transAxes)
+        if largest:
+            lines = []
+            for ev in largest:
+                mag = ev["magnitude"]
+                mag_s = f"M{mag:.1f}" if mag is not None else "M?"
+                depth = ev["depth_km"]
+                depth_s = (f"{depth:.0f} km deep"
+                           if depth is not None and depth == depth
+                           else "depth unknown")
+                place = (ev["place"] or ev["event_id"] or "—")[:44]
+                et = f" [{ev['event_type']}]" if ev["event_type"] else ""
+                lines.append(f"{mag_s} · {place} · {depth_s}{et}")
+            ax_r.text(0.0, 0.78, "\n".join(lines), ha="left", va="top",
+                      fontsize=16, color=st["text"], transform=ax_r.transAxes,
+                      linespacing=1.9)
+        else:
+            ax_r.text(0.0, 0.78, "—", ha="left", va="top",
+                      fontsize=16, color=st["muted"],
+                      transform=ax_r.transAxes)
+
+        # Daily-count time-series panel ------------------------------------
+        ax_s = fig.add_axes([0.08, 0.08, 0.84, 0.18])
+        ax_s.set_facecolor(st["axes"])
+        ax_s.tick_params(colors=st["muted"], labelsize=14)
+        for spine in ax_s.spines.values():
+            spine.set_color(st["muted"])
+        ax_s.set_title("Daily event counts", color=st["text"],
+                       fontsize=20, loc="left", pad=8)
+        if count_dates and any(c != 0 for c in count_vals):
+            xs = mdates.date2num(count_dates)
+            ax_s.bar(xs, count_vals, color=st["series"], width=1.0,
+                     alpha=0.85)
+            ax_s.axvline(mdates.date2num(frame_date), color=st["text"],
+                         lw=2, ls="--", alpha=0.9)
+            at = [j for j, d in enumerate(count_dates) if d <= frame_date]
+            if at:
+                j = at[-1]
+                ax_s.scatter([mdates.date2num(count_dates[j])],
+                             [cum_vals[j]], s=90,
+                             color=st["series"],
+                             edgecolors=st["text"], zorder=5)
+            ax_s.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+            ax_s.set_ylabel("events/day", color=st["muted"], fontsize=16)
+        else:
+            ax_s.text(0.5, 0.5, "No events in this window",
+                      transform=ax_s.transAxes, ha="center", va="center",
+                      fontsize=20, color=st["muted"])
+            ax_s.set_xlim(0, 1)
+            ax_s.set_ylim(0, 1)
+
+        # Footer ------------------------------------------------------------
+        footer_var = spec.variable
+        if empty:
+            footer_var += " · no events in window"
+        else:
+            top = largest[0] if largest else None
+            top_s = (f"M{top['magnitude']:.1f}"
+                     if top and top["magnitude"] is not None else "M?")
+            footer_var += (f" · {len(events)} events · largest {top_s} · "
+                           "observed events — not a forecast")
+        # The prescribed footer wording is long; a smaller size keeps it
+        # on the 1080 px figure (see _draw_footer's fontsize option).
+        _draw_footer(fig, spec, st, footer_var, fontsize=13)
+
+        frame_path = out / f"frame_{n + 1:04d}.png"
+        fig.savefig(frame_path, facecolor=fig.get_facecolor())
+        plt.close(fig)
+        frames.append(str(frame_path.resolve()))
+        timestamps.append(frame_date.isoformat())
+
+    largest_meta = []
+    for ev in _quake_largest(events, 5):
+        largest_meta.append({
+            "event_id": ev["event_id"],
+            "time": ev["time"].isoformat(),
+            "lat": ev["lat"], "lon": ev["lon"],
+            "depth_km": ev["depth_km"],
+            "magnitude": ev["magnitude"],
+            "mag_type": ev["mag_type"],
+            "place": ev["place"],
+            "event_type": ev["event_type"],
+        })
+
+    manifest = {
+        "schema": SCHEMA_ID,
+        "spec": spec.to_dict(),
+        "frames": frames,
+        "timestamps": timestamps,
+        "render": {
+            "layout": layout,
+            "style": style,
+            "cmap": "quake-magnitude",
+            "vmin": None,
+            "vmax": None,
+            "n_frames": len(frames),
+            "engine": f"survey-viz {__version__}",
+            "created": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "underlay": underlay_status,
+            "cumulative": True,
+            "n_events": len(events),
+            "daily_counts": count_vals,
+            "largest": largest_meta,
+            "min_magnitude": min_magnitude,
+            "event_type": event_type,
+            "skipped_no_time": n_skipped,
+            "empty": empty,
+            "catalog_note": _QUAKE_CATALOG_NOTE,
+            "comcat": dict(prov),
         },
     }
     manifest_path = out / "manifest.json"

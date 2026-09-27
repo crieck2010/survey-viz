@@ -51,6 +51,12 @@ Routing rules (documented in docs/PARSER.md):
   network is US-only, so bboxes outside USGS coverage yield an honest
   empty field; the gage renderer turns that into an explicit
   empty-frame message rather than fabricated data).
+* ``"earthquakes"`` anywhere -> ``"comcat"`` (USGS Earthquake Catalog
+  FDSN event service — keyless HTTPS GeoJSON, global — daily frames,
+  cumulative event display; the quake renderer turns an empty field
+  into an explicit empty-frame message rather than fabricated
+  markers). The catalog is observed events, not a forecast hazard
+  model — every render records that honesty note in the manifest.
 * ``"sea-level"`` (without "pressure") has no fetch adapter ->
   ``""``: sea level is satellite altimetry, a different observable
   from GRACE terrestrial water storage, so it is refused rather than
@@ -96,7 +102,16 @@ Note: the ``"blackmarble"`` adapter is
 ``fetch_for_source("blackmarble")`` returns the raw callable and
 callers pass ``(bbox, start, end, product="daily", stride_days=...,
 resolution=...)`` positionally.
+Note: the ``"comcat"`` adapter is
+``currents.earthquakes.fetch_earthquakes`` —
+``fetch_for_source("comcat")`` returns the raw callable and callers
+pass ``(bbox, start, end)`` positionally, with keyword args
+``min_magnitude=...`` (float, minimum reported magnitude),
+``event_type=...`` (``None`` for all types, or e.g. ``"earthquake"``),
+``page_size=...`` and ``cache_dir=...``.
 """
+
+from __future__ import annotations
 
 from __future__ import annotations
 
@@ -132,6 +147,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "grace": "CSR GRACE/GRACE-FO RL06.3",
     "usgs": "USGS Water Services (NWIS)",
     "oceancolor": "NOAA CoastWatch Ocean Color (MODIS Aqua R2022 L3)",
+    "comcat": "USGS Earthquake Catalog (ComCat)",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -152,6 +168,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "grace": ("currents.grace", "fetch_grace"),
     "usgs": ("currents.streamgages", "fetch_usgs"),
     "oceancolor": ("currents.oceancolor", "fetch_oceancolor"),
+    "comcat": ("currents.earthquakes", "fetch_earthquakes"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -172,6 +189,7 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "grace": "0.12.0",
     "usgs": "0.13.0",
     "oceancolor": "0.14.0",
+    "comcat": "0.15.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -270,6 +288,14 @@ def default_source(variable: str, region_key: str) -> str:
     # the Great Lakes.
     if variable in ("ocean-color", "chlorophyll"):
         return "oceancolor"
+    # "earthquakes" (seismic events) route globally to the USGS
+    # Earthquake Catalog (ComCat) FDSN event service — the catalog is
+    # global, so there is no regional restriction. The fetch is
+    # keyless; the quake renderer draws cumulative daily frames and
+    # records the catalog-not-a-forecast honesty note in every
+    # manifest (see docs/EARTHQUAKES.md).
+    if variable == "earthquakes":
+        return "comcat"
     # "country-borders" has no adapter either: Natural Earth vectors
     # are a cartographic underlay, not a data variable — "country
     # borders" alone is refused rather than rendered as an empty map.
@@ -372,6 +398,10 @@ def explain_source(spec: Any) -> str:
         "oceancolor": "ocean color / chlorophyll-a -> NOAA CoastWatch "
                       "ERDDAP (MODIS Aqua R2022 L3, monthly, ~4 km, "
                       "2002-present; keyless)",
+        "comcat": "earthquakes / seismic events -> USGS Earthquake "
+                  "Catalog (ComCat) FDSN event service (keyless, "
+                  "global; observed events, not a forecast hazard "
+                  "model)",
     }.get(source, f"variable {variable!r}")
     return (f"source {source!r} ({label}): regional default — {default_why}; "
             "the parser did not pin a source.")

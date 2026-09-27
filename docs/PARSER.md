@@ -51,6 +51,7 @@ san-francisco-bay.
 | `elevation` *(GEBCO)* | elevation(s), terrain(s), topography, mountain(s) |
 | `country-borders` *(no adapter)* | country borders/boundaries, national borders, political boundaries |
 | `streamflow` *(USGS)* | **pre-checked**: streamflow, river discharge, stream discharge, river flow, gage(s), gauge(s), streamgage(s), stream gauge(s) |
+| `earthquakes` *(ComCat)* | **pre-checked**: earthquake(s), seismic, quake(s), tremor(s), magnitude(s), foreshock(s), aftershock(s), seismic hazard |
 
 Rules:
 
@@ -59,6 +60,12 @@ Rules:
   "flow" pattern too, and the pre-check wins so river requests never
   land on ocean currents. A bare ocean/current "flow" request ("Ocean
   flow patterns …") still routes to `currents`.
+- **Earthquakes are pre-checked right after streamflow (before storm
+  intent).** The patterns above for `earthquakes` run before the
+  earliest-wins race: "The depth of the earthquake" matches
+  `bathymetry`'s bare "depth" pattern too, and the pre-check wins so
+  quake requests never land on seafloor depth. Quake depth is
+  hypocentral, not seafloor (documented in docs/EARTHQUAKES.md).
 - **Earliest keyword in the text wins.** "temperature and currents" → `sst`;
   "currents and temperature" → `currents`. (Deterministic, no priority list
   to memorize.)
@@ -431,6 +438,11 @@ docs/WATER.md.
   California this year" → `variable="streamflow"`, `source="usgs"`
   (survey-currents v0.13.0+). Full rules in docs/STREAMFLOW.md; the
   parser section is §6e below.
+- **Earthquakes route to the USGS Earthquake Catalog.** "Earthquakes
+  in California over the past 3 months" →
+  `variable="earthquakes"`, `source="comcat"` (survey-currents
+  v0.15.0+). Full rules in docs/EARTHQUAKES.md; the parser section
+  is §6f below.
 - **Sea level is refused.** "Sea level in California" →
   `variable="sea-level"`, which has no fetch adapter — sea level is
   satellite altimetry, a different observable from GRACE terrestrial
@@ -473,6 +485,46 @@ fires on river wording or explicit gage/streamgage wording.
   wording) is NOT streamflow — flood-inundation mapping is
   imagery-based change detection, which belongs to survey-flood, not
   gage discharge.
+
+### 6f. Earthquakes (USGS Earthquake Catalog / ComCat)
+
+`variable="earthquakes"` always pins `source="comcat"`: the **USGS
+Earthquake Catalog (ComCat)** FDSN event service — keyless, global
+GeoJSON (survey-currents v0.15.0+), with an inspectable
+`source_reason`. Earthquake keywords: "earthquake(s)", "seismic",
+"quake(s)", "tremor(s)", "magnitude(s)", "foreshock(s)",
+"aftershock(s)", "seismic hazard". Cadence is always daily: one
+cumulative frame per day (each frame shows all events with time <=
+that frame date). Full rules in docs/EARTHQUAKES.md.
+
+The earthquake keyword block is checked **before** the
+earliest-wins race in §2 (right after the streamflow pre-check, and
+before storm intent), because `bathymetry`'s bare "depth"/"depths"
+pattern would otherwise win on phrasing like "The depth of the
+earthquake swarm …" — quake depth is hypocentral, not seafloor, so
+the pre-check guarantees earthquake intent wins. Storm intent is
+checked after: it requires storm words ("storm", "hurricane",
+"cyclone", "typhoon"), so earthquake and storm readings never
+interact.
+
+- "Earthquakes in California over the past 3 months" →
+  `variable="earthquakes"`, `source="comcat"`, daily.
+- "The depth of the earthquake swarm in the Sea of Japan last month"
+  → `variable="earthquakes"` (not `bathymetry`).
+- "Aftershocks in the Gulf of Alaska over the past month" →
+  `variable="earthquakes"`, `source="comcat"`, daily.
+- **"Seismic hazard in California over the past year"** →
+  `variable="earthquakes"`, `source="comcat"` — the catalog is
+  *observed events, not a forecast hazard model*; the honesty note is
+  recorded in every render manifest (footer: "… observed events — not
+  a forecast"), never a hazard forecast.
+- **"Earthquakes and topography in California this year"** →
+  `variable="earthquakes"`, `source="comcat"` — topographic context
+  is the default GEBCO underlay beneath the quake markers (no
+  separate fetch); the `source_reason` notes it inspectably.
+- A bare ocean/current "flow" request ("Ocean flow patterns in the
+  Sea of Japan …") still routes to `currents` — the earthquake
+  pre-check only fires on seismic wording.
 
 ## 7. Failure mode
 

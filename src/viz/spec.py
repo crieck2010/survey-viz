@@ -30,6 +30,10 @@ KNOWN_VARIABLES = ("sst", "currents",
                    "water-storage",
                    # --- USGS (survey-currents v0.13.0+, source "usgs") ---
                    "streamflow",
+                   # --- earthquakes (survey-currents v0.15.0+, source
+                   # "comcat"): USGS Earthquake Catalog (ComCat),
+                   # rendered as point events, not a scalar grid.
+                   "earthquakes",
                    # Refusal-only variables (documented, no fetch adapter):
                    # "sea-level" (satellite altimetry, a different
                    # observable from GRACE TWS).
@@ -46,7 +50,7 @@ KNOWN_STYLES = ("reel-dark", "light")
 #: source and keep working unchanged).
 KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5", "oscar", "cmems-currents",
                  "firms", "nsidc", "imerg", "blackmarble", "gebco", "ibtracs",
-                 "grace", "usgs", "oceancolor")
+                 "grace", "usgs", "oceancolor", "comcat")
 #: Variables that may appear in ``VizSpec.overlays`` (drawn as contour
 #: overlays over the base variable, e.g. isobars over a wind map).
 KNOWN_OVERLAYS = ("wind", "msl", "t2m", "tp")

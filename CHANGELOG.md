@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-09-27
+
+### Added
+- USGS Earthquake Catalog (`KNOWN_VARIABLES += ("earthquakes",)`,
+  `KNOWN_SOURCES += ("comcat",)`, source label "USGS Earthquake
+  Catalog (ComCat)"; minimum peer `survey-currents >= 0.15.0`):
+  - `earthquakes` always pins `source="comcat"` (ComCat FDSN event
+    service: keyless, global, GeoJSON) with an inspectable
+    `source_reason`; cadence is always daily.
+    Keywords: "earthquake(s)", "seismic", "quake(s)", "tremor(s)",
+    "magnitude(s)", "foreshock(s)", "aftershock(s)", "seismic hazard"
+    — checked *before* the earliest-wins race (right after the
+    streamflow pre-check, before storm intent) so `bathymetry`'s bare
+    "depth" never misreads "the depth of the earthquake" as seafloor
+    depth.
+  - "Seismic hazard" wording routes to `earthquakes` — the catalog is
+    *observed events, not a forecast hazard model*; the honesty note
+    is recorded in every render manifest and the frame footer reads
+    "… observed events — not a forecast".
+  - "earthquakes and topography" wording keeps
+    `variable="earthquakes"` (no separate fetch): topographic context
+    is the default GEBCO underlay beneath every quake render, noted
+    inspectably in `source_reason`.
+  - Dedicated point/time quake renderer (no scalar-grid conversion):
+    CUMULATIVE daily frames (each frame shows all events with time <=
+    that frame date), markers sized by magnitude via the documented
+    power law `area = 80 × 10**(0.75·(M − 4))` (each +1 M unit ≈ 5.6×
+    marker area) and colored by hypocentral-depth bin (shallow
+    <70 km / intermediate 70–300 km / deep ≥300 km / unknown),
+    magnitude marker chips M4–M7, depth-bin legend, largest-events
+    readout (top 5 by magnitude with place + depth, event_type shown
+    honestly), daily event-count time series with a cumulative
+    playhead, GEBCO/Natural Earth underlay beneath, coastlines above.
+    Empty windows render an explicit empty-frame message (never
+    fabricated markers); the manifest records `n_events`,
+    `daily_counts`, `largest`, `min_magnitude`, the catalog/hazard
+    note, and the underlay status.
+  - Docs: new docs/EARTHQUAKES.md (access truth: keyless ComCat FDSN
+    endpoint, default 20000-event limit — global M4+/one week = 179
+    events and global M0+/one week = 1906 events both fit in one
+    response, verified live 2026-09-27; `limit`/`offset` paging; no
+    rate-limit headers observed; magnitude-of-completeness caveat;
+    non-tectonic `event_type`s shown honestly); docs/PARSER.md (§2
+    routing table + rules, new §6f) and README updated.
+
 ## [0.13.0] - 2026-09-27
 
 ### Added

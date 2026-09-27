@@ -84,6 +84,13 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   earliest-wins race so `currents`' bare "stream"/"flow" never steals
   "river flow"); "flooding after heavy rainfall" → `streamflow` +
   `tp` overlay;
+  **earthquake(s)/seismic/quake(s)/tremor(s)/magnitude(s)/foreshock(s)/aftershock(s)/seismic
+  hazard** → `earthquakes` (USGS Earthquake Catalog ComCat FDSN event
+  service — keyless, global — `survey-currents` v0.15.0+; checked
+  *before* the earliest-wins race so `bathymetry`'s bare "depth"
+  never steals "the depth of the earthquake"); "earthquakes and
+  topography" keeps `earthquakes` with the GEBCO underlay as
+  topographic context (noted in `source_reason`);
   **fire(s)/wildfire(s)/burning/burn(s)** → `fire` (NASA FIRMS active-fire
   detections); **burn scar(s)/burned area(s)/burn severity** →
   `burn-scar` (parses, but has no fetch adapter — honest refusal naming
@@ -166,7 +173,24 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   data: the dedicated gage renderer draws markers colored by the
   current discharge percentile category over the GEBCO/Natural Earth
   underlay plus a hydrograph panel (selected gage via
-  `spec.gage_site`, else the documented regional-median rule); no
+  `spec.gage_site`, else the documented regional-median rule); `earthquakes`
+  always pins `source="comcat"` (USGS Earthquake Catalog ComCat FDSN
+  event service — keyless, global — `survey-currents` v0.15.0+) with
+  an inspectable `source_reason` (see docs/EARTHQUAKES.md); keywords:
+  **earthquake(s)**, **seismic**, **quake(s)**, **tremor(s)**,
+  **magnitude(s)**, **foreshock(s)**, **aftershock(s)**, **seismic
+  hazard** — checked *before* the earliest-wins race so
+  `bathymetry`'s bare "depth" never misreads "the depth of the
+  earthquake" as seafloor depth. "Seismic hazard" wording renders the
+  *observed* catalog, never a hazard forecast (the honesty note is
+  recorded in every manifest). Quakes are point/time data: the
+  dedicated quake renderer draws CUMULATIVE daily frames (each frame
+  shows all events with time <= that frame date) with markers sized
+  by magnitude (documented power law) and colored by
+  hypocentral-depth bin, over the GEBCO/Natural Earth underlay, plus
+  a daily event-count time series and a largest-events readout; empty
+  windows render an explicit empty-frame message, never fabricated
+  markers.
   gages in the window renders an explicit empty-frame message, never
   fabricated data. Whenever the parser pins a source it
   records `VizSpec.source_reason`, and
@@ -222,7 +246,9 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
   country-borders' message explains Natural Earth vectors are an
   underlay, not a variable). `streamflow` (river discharge) routes to
   USGS Water Services NWIS streamgages (keyless, US-only —
-  `survey-currents` v0.13.0+); "sea level" without "pressure" stays an
+  `survey-currents` v0.13.0+); `earthquakes` routes to the USGS
+  Earthquake Catalog ComCat FDSN event service (keyless, global —
+  `survey-currents` v0.15.0+); "sea level" without "pressure" stays an
   honest refusal (satellite altimetry ≠ GRACE water storage). See
   `viz.sources.resolve_source()` and the `notes` field in
   `data/regions.yaml`.
@@ -236,6 +262,9 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
 ## Docs
 
 - [docs/PARSER.md](docs/PARSER.md) — the full deterministic grammar
+- [docs/EARTHQUAKES.md](docs/EARTHQUAKES.md) — USGS Earthquake Catalog
+  (ComCat) rendering: cumulative daily frames, magnitude sizing and
+  depth-bin coloring, the observed-events-not-a-forecast honesty rule
 - [docs/STREAMFLOW.md](docs/STREAMFLOW.md) — USGS streamgage rendering:
   gage markers, discharge-percentile categories, hydrograph rules,
   empty-field behavior

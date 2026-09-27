@@ -222,6 +222,26 @@ _VARIABLE_PATTERNS = {
         r"\bstreamgages?\b",
         r"\bstream\s+gauges?\b",
     ],
+    # --- earthquakes (survey-currents v0.15.0+, source "comcat") ---
+    # "earthquakes" is listed last in the variable groups and ALSO
+    # pre-checked by _parse_earthquake_request before the earliest-wins
+    # race: the "bathymetry" group has a bare "depth" pattern
+    # (r"(?<![\w-])depths?\b") that would otherwise win on phrasing
+    # like "The depth of the earthquake..." — the pre-check guarantees
+    # earthquake intent wins (see docs/PARSER.md). "seismic hazard"
+    # wording routes here too — the catalog is observed events, NOT a
+    # forecast hazard model, and the renderer records that honesty
+    # note in every manifest (see docs/EARTHQUAKES.md).
+    "earthquakes": [
+        r"\bearthquakes?\b",
+        r"\bseismic\b",
+        r"\bquakes?\b",
+        r"\btremors?\b",
+        r"\bmagnitudes?\b",
+        r"\bforeshocks?\b",
+        r"\baftershocks?\b",
+        r"\bseismic\s*hazards?\b",
+    ],
 }
 
 # Storm keywords: they name the ("wind", overlays=["msl"]) combination
@@ -400,6 +420,41 @@ def _parse_streamflow_request(text: str) -> Optional[Tuple[str, Tuple[str, ...]]
         return "streamflow", (("tp",) if rain else ())
     return None
 
+
+# --- earthquake intent (survey-currents v0.15.0+, source "comcat") ----------
+# Explicit earthquake/seismic wording: "earthquake", "quake", "seismic",
+# "tremor", "magnitude", "foreshock", "aftershock", "seismic hazard".
+# These are checked BEFORE the earliest-wins race (and before storm
+# intent) because the "bathymetry" group has a bare "depth"/"depths"
+# pattern that would otherwise win on phrasing like "The depth of the
+# earthquake...". A quake depth is hypocentral depth, not seafloor
+# depth — the pre-check guarantees earthquake intent wins.
+_EARTHQUAKE_PATTERNS = [
+    r"\bearthquakes?\b",
+    r"\bseismic\b",
+    r"\bquakes?\b",
+    r"\btremors?\b",
+    r"\bmagnitudes?\b",
+    r"\bforeshocks?\b",
+    r"\baftershocks?\b",
+    r"\bseismic\s*hazards?\b",
+]
+
+
+def _parse_earthquake_request(text: str) -> Optional[str]:
+    """Detect earthquake / seismic-event intent.
+
+    Returns ``"earthquakes"`` when the description names earthquakes
+    explicitly (earthquake, quake, seismic, tremor, magnitude,
+    foreshock, aftershock, seismic hazard), else ``None``. Checked
+    before the earliest-wins race so the "bathymetry" bare-"depth"
+    pattern cannot steal "the depth of the earthquake".
+    """
+    lowered = text.lower()
+    if any(re.search(p, lowered) for p in _EARTHQUAKE_PATTERNS):
+        return "earthquakes"
+    return None
+
 _VARIABLE_LABELS = {
     "sst": "Surface Water Temperature",
     "currents": "Surface Currents",
@@ -422,6 +477,7 @@ _VARIABLE_LABELS = {
     "water-storage": "Terrestrial Water Storage",
     "streamflow": "Streamflow",
     "sea-level": "Sea Level",
+    "earthquakes": "Earthquakes",
 }
 
 # --- time phrases ------------------------------------------------------------
@@ -601,6 +657,18 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
     currents. Rainfall wording on a streamflow win adds the "tp"
     precipitation overlay as best-effort context.
 
+    Earthquake intent (see :func:`_parse_earthquake_request`) is
+    detected right after streamflow and BEFORE storm intent:
+    explicit earthquake/seismic wording ("earthquake", "quake",
+    "seismic", "tremor", "magnitude", "foreshock", "aftershock",
+    "seismic hazard") routes to ``"earthquakes"`` (USGS Earthquake
+    Catalog, source "comcat") — the "bathymetry" group's bare
+    "depth"/"depths" pattern would otherwise win on phrasing like
+    "The depth of the earthquake...". Storm intent requires storm
+    words ("storm", "hurricane", "cyclone", "typhoon"), so no
+    earthquake/storm interaction exists — the earthquake win is
+    unconditional.
+
     On a ``"storm-tracks"`` win, "with the wind field" / "with the
     pressure field" wording adds the corresponding ERA5 contour overlay
     (the pipeline fetches it as context; the renderer degrades
@@ -630,6 +698,12 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
     if streamflow_req is not None:
         return (streamflow_req[0], streamflow_req[1], False,
                 "", "", None, ())
+    # Earthquake intent wins before the earliest-wins race (and
+    # before storm intent): explicit earthquake/seismic wording is
+    # unambiguous, and the "bathymetry" bare-"depth" pattern would
+    # otherwise win on phrasing like "The depth of the earthquake...".
+    if _parse_earthquake_request(text) is not None:
+        return "earthquakes", (), False, "", "", None, ()
     storm_req = _parse_storm_request(text)
     if storm_req is not None:
         storm_name, storm_rank, storm_top_n = storm_req
@@ -783,6 +857,13 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
       geometrically, but inland/coastal retrievals are indicative
       only (case-2 waters: land adjacency, bottom reflectance, CDOM,
       suspended sediment — see docs/OCEANCOLOR.md).
+    * ``"earthquakes"`` always pins ``"comcat"`` (USGS Earthquake
+      Catalog FDSN event service: keyless, global, GeoJSON) with an
+      inspectable ``source_reason`` — in every region; the catalog is
+      observed events, not a forecast hazard model (see
+      docs/EARTHQUAKES.md). "earthquakes and topography" wording keeps
+      the pin and notes in ``source_reason`` that topographic context
+      comes from the default GEBCO underlay (no separate fetch).
 
     The reason is always populated when a source is pinned (used for
     ``VizSpec.source_reason``).
@@ -845,6 +926,18 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
                 "chlorophyll-a / ocean color description -> "
                 "NOAA CoastWatch ERDDAP (MODIS Aqua R2022, "
                 "monthly L3 chlorophyll-a, ~4 km, 2002-present, keyless)")
+    if variable == "earthquakes":
+        reason = ("earthquake / seismic description -> "
+                  "USGS Earthquake Catalog (ComCat), keyless, global")
+        # "earthquakes and topography" wording keeps variable=
+        # "earthquakes" (no separate fetch): the topographic context
+        # is the default GEBCO underlay beneath every quake render,
+        # and the reason says so inspectably.
+        if _first_match(lowered, _VARIABLE_PATTERNS["elevation"]):
+            reason += ("; topographic context comes from the GEBCO "
+                       "underlay beneath the quake markers (no separate "
+                       "fetch)")
+        return "comcat", reason
     return "", ""
 
 
@@ -960,7 +1053,9 @@ def parse_description(
     # cumulatively (v0.10.0). Water storage is a monthly product: GRACE
     # always renders one frame per month (v0.11.0). Streamflow is a
     # daily product: USGS daily values render one frame per day
-    # (v0.12.0). Ocean color is a monthly product by default (the most
+    # (v0.12.0). Earthquakes are event-level: one cumulative frame per
+    # day (each frame shows all events with time <= that frame date,
+    # v0.14.0). Ocean color is a monthly product by default (the most
     # cloud-complete composite); explicit "daily" wording requests the
     # daily L3 product instead (v0.13.0).
     if variable in ("bathymetry", "elevation"):
@@ -974,7 +1069,8 @@ def parse_description(
         cadence = "daily"
     else:
         cadence = "daily" if variable in ("fire", "sea-ice", "night-lights",
-                                          "storm-tracks", "streamflow") else "monthly"
+                                          "storm-tracks", "streamflow",
+                                          "earthquakes") else "monthly"
     source, source_reason = _parse_source(normalized, variable)
     return VizSpec(
         title=spec_title,
