@@ -23,12 +23,12 @@ KNOWN_VARIABLES = ("sst", "currents", "chlorophyll",
                    "storm-tracks",
                    # --- GRACE (survey-currents v0.12.0+, source "grace") ---
                    "water-storage",
+                   # --- USGS (survey-currents v0.13.0+, source "usgs") ---
+                   "streamflow",
                    # Refusal-only variables (documented, no fetch adapter):
-                   # "streamflow" (no river-discharge adapter yet —
-                   # streamgages are item 11 of the remote-sensing
-                   # program) and "sea-level" (satellite altimetry, a
-                   # different observable from GRACE TWS).
-                   "streamflow", "sea-level")
+                   # "sea-level" (satellite altimetry, a different
+                   # observable from GRACE TWS).
+                   "sea-level")
 KNOWN_CADENCES = ("daily", "monthly", "yearly")
 KNOWN_LAYOUTS = ("reel-vertical",)
 KNOWN_STYLES = ("reel-dark", "light")

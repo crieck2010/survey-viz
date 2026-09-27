@@ -297,11 +297,6 @@ def _explain_refusal(variable: str, region_key: str) -> str:
                 "as a map underlay (see docs/BASEMAPS.md), never as the "
                 "visualization itself, so 'country borders' alone is "
                 "refused rather than rendered as an empty map.")
-    if variable == "streamflow":
-        return ("no source: no river-discharge / streamflow adapter exists "
-                "yet — USGS streamgages are item 11 of the remote-sensing "
-                "program (see docs/ROADMAP in earthwatch-suite), so "
-                "'streamflow' is refused rather than misrendered.")
     if variable == "sea-level":
         return ("no source: 'sea-level' is satellite altimetry — a "
                 "different observable from GRACE terrestrial water "
