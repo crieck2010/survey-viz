@@ -37,7 +37,7 @@ KNOWN_STYLES = ("reel-dark", "light")
 #: source and keep working unchanged).
 KNOWN_SOURCES = ("glsea", "oisst", "mur", "era5", "oscar", "cmems-currents",
                  "firms", "nsidc", "imerg", "blackmarble", "gebco", "ibtracs",
-                 "grace")
+                 "grace", "usgs")
 #: Variables that may appear in ``VizSpec.overlays`` (drawn as contour
 #: overlays over the base variable, e.g. isobars over a wind map).
 KNOWN_OVERLAYS = ("wind", "msl", "t2m", "tp")

@@ -10,7 +10,7 @@ Peers (survey-currents, survey-animate) are optional and duck-typed —
 never hard imports, never hard dependencies.
 """
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 from .gazetteer import find_region, get_region, is_fetchable, load_regions
 from .parser import UnparseableDescription, parse_description

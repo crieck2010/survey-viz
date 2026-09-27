@@ -87,13 +87,12 @@ def test_parse_era5_precipitation_stays_off_grace():
 # Parser: honest refusals (streamflow / sea-level)
 # ---------------------------------------------------------------------------
 
-def test_parse_river_discharge_is_refusal():
+def test_parse_river_discharge_routes_to_usgs():
     spec = _parse("River discharge in California this year")
     assert spec.variable == "streamflow"
-    assert resolve_source(spec) == ""
-    msg = explain_source(spec)
-    assert "no source" in msg
-    assert "streamflow" in msg or "streamgage" in msg
+    assert spec.source == "usgs"
+    assert "USGS" in spec.source_reason
+    assert resolve_source(spec) == "usgs"
 
 
 def test_parse_sea_level_is_refusal_not_grace():
@@ -150,14 +149,13 @@ def test_spec_accepts_grace_and_tp_overlay():
 
 
 def test_explain_refusals_name_the_gap():
-    for variable, needle in (("streamflow", "streamgage"),
-                             ("sea-level", "altimetry")):
-        spec = VizSpec(title="t", region_key="california",
-                       bbox=(-125.0, 30.0, -110.0, 45.0),
-                       variable=variable, start=dt.date(2020, 1, 1),
-                       end=dt.date(2020, 12, 31), cadence="monthly")
-        assert resolve_source(spec) == ""
-        assert needle in explain_source(spec)
+    # streamflow now routes to USGS (v0.12.0); sea-level stays refused.
+    spec = VizSpec(title="t", region_key="california",
+                   bbox=(-125.0, 30.0, -110.0, 45.0),
+                   variable="sea-level", start=dt.date(2020, 1, 1),
+                   end=dt.date(2020, 12, 31), cadence="monthly")
+    assert resolve_source(spec) == ""
+    assert "altimetry" in explain_source(spec)
 
 
 # ---------------------------------------------------------------------------

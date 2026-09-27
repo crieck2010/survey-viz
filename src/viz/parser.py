@@ -178,13 +178,15 @@ _VARIABLE_PATTERNS = {
     ],
     # --- GRACE variables (survey-currents v0.12.0+, source "grace") ---
     # "water-storage" routes to CSR GRACE/GRACE-FO RL06.3 terrestrial
-    # water storage anomalies. "sea-level" and "streamflow" are
-    # refusal-only variables: "sea level" (without "pressure" — the
-    # negative lookahead keeps "sea level pressure" on "msl") is
-    # satellite altimetry, a different observable from GRACE TWS, and
-    # river discharge has no adapter yet (streamgages are item 11 of
-    # the remote-sensing program). Both get honest refusals from
-    # viz.sources, never a GRACE map.
+    # water storage anomalies. "sea-level" stays refusal-only: "sea
+    # level" (without "pressure" — the negative lookahead keeps "sea
+    # level pressure" on "msl") is satellite altimetry, a different
+    # observable from GRACE TWS. "streamflow" now routes to USGS
+    # streamgages (survey-currents v0.13.0+, source "usgs"); the
+    # explicit _parse_streamflow_request check below guarantees the
+    # streamflow intent wins before the earliest-wins race, because the
+    # broad "currents" patterns (bare "streams?", "flows?") would
+    # otherwise misread "river flow" as ocean currents.
     "water-storage": [
         r"\bwater[ -]?storages?\b",
         r"\bgroundwaters?\b",
@@ -205,6 +207,15 @@ _VARIABLE_PATTERNS = {
     "streamflow": [
         r"\bstreamflows?\b",
         r"\briver\s*discharges?\b",
+        r"\bstream\s*discharges?\b",
+        # "river flow" is streamflow intent, NOT ocean currents: the
+        # pre-race _parse_streamflow_request guarantees this wins over
+        # the bare "flows?" currents pattern.
+        r"\briver\s*flows?\b",
+        r"\bgages?\b",
+        r"\bgauges?\b",
+        r"\bstreamgages?\b",
+        r"\bstream\s+gauges?\b",
     ],
 }
 
@@ -281,6 +292,63 @@ _WATER_CONTEXT_PATTERNS = {
            r"\bcompared\s+to\s+(?:rain|rainfall|precipitation)\b",
            r"\bagainst\s+(?:rain|rainfall|precipitation)\b"],
 }
+
+# --- streamflow intent (survey-currents v0.13.0+, source "usgs") ------------
+# Explicit streamflow phrases: "streamflow", "river discharge", "stream
+# discharge", "river flow", "gage"/"gages", "streamgage"/"streamgages".
+# These are checked BEFORE the earliest-wins race (and before storm
+# intent) because the broad "currents" patterns (bare "streams?",
+# "flows?", "currents?") would otherwise misread "river flow" or
+# "stream discharge" as ocean currents. A bare "flow"/"flows" with no
+# river/stream/gage context is NOT streamflow intent — ocean/current
+# "flow" requests keep routing to "currents".
+_STREAMFLOW_PATTERNS = [
+    r"\bstreamflows?\b",
+    r"\briver\s*discharges?\b",
+    r"\bstream\s*discharges?\b",
+    r"\briver\s*flows?\b",
+    r"\bgages?\b",
+    r"\bgauges?\b",
+    r"\bstreamgages?\b",
+    r"\bstream\s+gauges?\b",
+]
+
+#: Flood wording that, TOGETHER WITH rainfall wording, is a streamflow
+#: request: "Flooding after heavy rainfall in Ohio" -> streamflow
+#: primary + "tp" precipitation overlay. Flood wording ALONE (no
+#: rainfall phrasing) is not streamflow intent — a flood-inundation
+#: map is survey-flood's imagery domain, not streamgage discharge.
+_FLOOD_PATTERNS = [
+    r"\bflood(?:s|ed|ing)?\b",
+]
+_RAINFALL_PATTERNS = [
+    r"\brainfalls?\b",
+    r"\bprecipitations?\b",
+    r"\bheavy\s+rains?\b",
+    r"\bdownpours?\b",
+    r"\bdeluges?\b",
+    r"\brain\b",
+]
+
+
+def _parse_streamflow_request(text: str) -> Optional[Tuple[str, Tuple[str, ...]]]:
+    """Detect streamflow / river-discharge intent.
+
+    Returns ``("streamflow", overlays)`` when the description names
+    streamflow explicitly (streamflow, river/stream discharge, river
+    flow, gage/gages, streamgage(s)) or pairs flood wording with
+    rainfall wording ("flooding after heavy rainfall"), else ``None``.
+    The overlay is ``("tp",)`` when rainfall wording is present —
+    precipitation is the best-effort context the pipeline fetches
+    alongside the gages; it degrades gracefully when unavailable.
+    """
+    lowered = text.lower()
+    explicit = any(re.search(p, lowered) for p in _STREAMFLOW_PATTERNS)
+    flood = any(re.search(p, lowered) for p in _FLOOD_PATTERNS)
+    rain = any(re.search(p, lowered) for p in _RAINFALL_PATTERNS)
+    if explicit or (flood and rain):
+        return "streamflow", (("tp",) if rain else ())
+    return None
 
 _VARIABLE_LABELS = {
     "sst": "Surface Water Temperature",
@@ -471,6 +539,16 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
     Black Marble map would be a lie. No keyword ->
     ("sst", (), True, "", "", None).
 
+    Streamflow intent (see :func:`_parse_streamflow_request`) is
+    detected BEFORE storm intent: explicit streamflow phrasing
+    ("streamflow", "river discharge", "river flow", "gages",
+    "streamgages") and flood-plus-rainfall wording ("flooding after
+    heavy rainfall") route to ``"streamflow"`` (USGS Water Services
+    daily values, source "usgs") — the broad "currents" patterns (bare
+    "streams?"/"flows?") would otherwise misread them as ocean
+    currents. Rainfall wording on a streamflow win adds the "tp"
+    precipitation overlay as best-effort context.
+
     On a ``"storm-tracks"`` win, "with the wind field" / "with the
     pressure field" wording adds the corresponding ERA5 contour overlay
     (the pipeline fetches it as context; the renderer degrades
@@ -479,8 +557,19 @@ def _parse_variable(text: str) -> Tuple[str, Tuple[str, ...], bool,
     On a ``"water-storage"`` win, "vs rainfall" / "with rainfall"
     wording adds a precipitation contour overlay (``"tp"``) — the GRACE
     anomaly map stays the base map and precipitation is context.
+    On a ``"streamflow"`` win, rainfall wording ("after heavy
+    rainfall", "with rainfall", ...) adds the same ``"tp"`` overlay —
+    the gage markers stay the base layer and precipitation is context.
     """
     lowered = text.lower()
+    # Streamflow intent wins before everything else: explicit
+    # streamflow phrasing (or flood + rainfall wording) is
+    # unambiguous, and the broad "currents" patterns would otherwise
+    # misread "river flow"/"stream discharge" as ocean currents.
+    streamflow_req = _parse_streamflow_request(text)
+    if streamflow_req is not None:
+        return (streamflow_req[0], streamflow_req[1], False,
+                "", "", None)
     storm_req = _parse_storm_request(text)
     if storm_req is not None:
         storm_name, storm_rank, storm_top_n = storm_req
@@ -614,6 +703,11 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
       RL06.3 terrestrial water storage anomalies: monthly, cm of
       liquid-water-equivalent thickness, land-only, 2002–present)
       with an inspectable ``source_reason`` — in every region.
+    * ``"streamflow"`` always pins ``"usgs"`` (USGS Water Services
+      NWIS streamgage daily values: daily MEAN discharge/gage height,
+      keyless HTTPS, US-only) with an inspectable ``source_reason``
+      — in every region; bboxes outside USGS coverage yield an honest
+      empty field, rendered as an explicit empty-frame message.
 
     The reason is always populated when a source is pinned (used for
     ``VizSpec.source_reason``).
@@ -666,6 +760,11 @@ def _parse_source(text: str, variable: str) -> Tuple[str, str]:
                 "water storage / groundwater description -> "
                 "CSR GRACE/GRACE-FO RL06.3 terrestrial water storage "
                 "anomalies (monthly, cm LWE, land-only)")
+    if variable == "streamflow":
+        return ("usgs",
+                "streamflow / river-discharge description -> "
+                "USGS Water Services (NWIS) streamgage daily values "
+                "(daily MEAN discharge, keyless, US-only)")
     return "", ""
 
 
@@ -759,7 +858,9 @@ def parse_description(
     # compilation, not a time series). Storm tracks are fix-level time
     # series: daily cadence, one frame per day, tracks drawn
     # cumulatively (v0.10.0). Water storage is a monthly product: GRACE
-    # always renders one frame per month (v0.11.0).
+    # always renders one frame per month (v0.11.0). Streamflow is a
+    # daily product: USGS daily values render one frame per day
+    # (v0.12.0).
     if variable in ("bathymetry", "elevation"):
         cadence = "yearly"
         if default_time:
@@ -768,7 +869,7 @@ def parse_description(
         cadence = "monthly"
     else:
         cadence = "daily" if variable in ("fire", "sea-ice", "night-lights",
-                                          "storm-tracks") else "monthly"
+                                          "storm-tracks", "streamflow") else "monthly"
     source, source_reason = _parse_source(normalized, variable)
     return VizSpec(
         title=spec_title,

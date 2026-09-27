@@ -50,9 +50,15 @@ san-francisco-bay.
 | `bathymetry` *(GEBCO)* | bathymetry, seafloor, depth(s) (not "in-depth"), trench(es), abyss, hadal |
 | `elevation` *(GEBCO)* | elevation(s), terrain(s), topography, mountain(s) |
 | `country-borders` *(no adapter)* | country borders/boundaries, national borders, political boundaries |
+| `streamflow` *(USGS)* | **pre-checked**: streamflow, river discharge, stream discharge, river flow, gage(s), gauge(s), streamgage(s), stream gauge(s) |
 
 Rules:
 
+- **Streamflow is pre-checked before the race.** The patterns above
+  for `streamflow` run first: "River flow" matches `currents`' bare
+  "flow" pattern too, and the pre-check wins so river requests never
+  land on ocean currents. A bare ocean/current "flow" request ("Ocean
+  flow patterns …") still routes to `currents`.
 - **Earliest keyword in the text wins.** "temperature and currents" → `sst`;
   "currents and temperature" → `currents`. (Deterministic, no priority list
   to memorize.)
@@ -414,17 +420,52 @@ docs/WATER.md.
   GRACE) — rain/precipitation keep their own earliest-wins race to
   `"tp"`; only a `water-storage` primary win can add `"tp"` as an
   overlay.
-- **River discharge is refused.** "River discharge in California
-  this year" → `variable="streamflow"`, which has no fetch adapter
-  (USGS streamgages are item 11 of the remote-sensing program) — an
-  honest no-adapter refusal naming the future adapter, never a GRACE
-  map.
+- **River discharge routes to USGS streamgages.** "River discharge in
+  California this year" → `variable="streamflow"`, `source="usgs"`
+  (survey-currents v0.13.0+). Full rules in docs/STREAMFLOW.md; the
+  parser section is §6e below.
 - **Sea level is refused.** "Sea level in California" →
   `variable="sea-level"`, which has no fetch adapter — sea level is
   satellite altimetry, a different observable from GRACE terrestrial
   water storage. "Sea level pressure", however, keeps its `msl`
   (ERA5) reading: the sea-level patterns carry a negative lookahead
   that fails on "pressure".
+
+### 6e. Streamflow (USGS streamgages) vs ocean currents
+
+`variable="streamflow"` always pins `source="usgs"`: **USGS Water
+Services (NWIS)** — streamgage daily MEAN values for discharge
+(`00060`, ft³/s) and gage height (`00065`, ft), US-only, keyless
+(survey-currents v0.13.0+), with an inspectable `source_reason`.
+Streamflow keywords: "streamflow", "river discharge", "stream
+discharge", "river flow", "gage(s)", "gauge(s)",
+"streamgage(s)", "stream gauge(s)". Cadence is always daily (the
+product is a daily product). Full rules in docs/STREAMFLOW.md.
+
+The streamflow keyword block is checked **before** the earliest-wins
+race in §2, because `currents`' broad patterns match bare
+`"stream"` and `"flows?"`: without the pre-check, "River flow"
+would be misread as ocean currents. Conversely, a bare
+ocean/current "flow" request ("Ocean flow patterns in the Gulf of
+Mexico") still routes to `currents` — the streamflow pre-check only
+fires on river wording or explicit gage/streamgage wording.
+
+- "Streamflow in California over the past 3 months" →
+  `variable="streamflow"`, `source="usgs"`, daily.
+- "River discharge in California this year" → `variable="streamflow"`,
+  `source="usgs"`, daily.
+- "River flow in California over the past 3 months" →
+  `variable="streamflow"` (not `currents`).
+- "Flooding after heavy rainfall in California over the past 3
+  months" → `variable="streamflow"`, `source="usgs"`,
+  `overlays=("tp",)` — flood-plus-rain wording routes to streamflow
+  primary with best-effort precipitation contours (the pipeline
+  degrades the overlay to an "absent" manifest status when it cannot
+  be fetched — never silently dropped).
+- "Flooding in California over the past 3 months" (no rainfall
+  wording) is NOT streamflow — flood-inundation mapping is
+  imagery-based change detection, which belongs to survey-flood, not
+  gage discharge.
 
 ## 7. Failure mode
 

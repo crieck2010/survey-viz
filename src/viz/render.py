@@ -26,6 +26,15 @@ Saffir-Simpson category, with genesis markers + name labels, an
 optional ERA5 contour context, and a category legend. See
 ``docs/STORMS.md``.
 
+When ``spec.variable == "streamflow"`` a dedicated gage renderer runs:
+a USGS ``GageField`` (or its ``to_dict()`` form) is drawn as gage
+markers over the underlay, colored by the current discharge
+percentile category (USGS WaterWatch-style classes), with a
+hydrograph panel (selected gage via ``spec.gage_site``, else the
+documented regional-median rule) and optional precipitation contour
+context. Empty gage sets render an explicit empty-frame message —
+never fabricated data. See ``docs/STREAMFLOW.md``.
+
 Layout ``"reel-vertical"`` (1080x1920): title block, map panel (pcolormesh,
 fixed vmin/vmax so the colormap never flickers, burned-in timestamp),
 time-series panel with a playhead line + dot synced to the frame date.
@@ -99,6 +108,12 @@ _VARIABLE_UNITS = {
     # liquid-water-equivalent thickness vs the 2004–2009 time-mean
     # (land-only; ocean cells are NaN).
     "water-storage": "cm",
+    # USGS Water Services (NWIS) streamgage daily values
+    # (survey-currents v0.13.0+, source "usgs"): marker unit follows
+    # the field's unit system (the gage renderer reads it from the
+    # field dict) — native ft³/s for discharge (00060), m³/s after
+    # to_si(). Registered here so messages degrade gracefully.
+    "streamflow": "ft³/s",
 }
 
 #: Colormaps per variable for the main map panel. Variables not listed
@@ -488,6 +503,11 @@ def render_viz(
 
     if spec.variable == "storm-tracks":
         return _render_storm_tracks(
+            spec, field, series, out_dir, layout, style,
+            underlay if underlay is not None else bool(spec.underlay))
+
+    if spec.variable == "streamflow":
+        return _render_gage_field(
             spec, field, series, out_dir, layout, style,
             underlay if underlay is not None else bool(spec.underlay))
 
@@ -1162,6 +1182,471 @@ def _render_storm_tracks(spec, field, series, out_dir: str,
             "underlay": underlay_status,
             "storms": storm_meta,
             "era5_context": era5_context,
+        },
+    }
+    manifest_path = out / "manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
+    return frames, str(manifest_path.resolve())
+
+
+# ---------------------------------------------------------------------------
+# Gage renderer (variable == "streamflow", source "usgs")
+# ---------------------------------------------------------------------------
+# Gages are point/time-series data, not a scalar grid, so they get a
+# dedicated path modeled on _render_storm_tracks: markers over the
+# GEBCO/Natural Earth underlay, colored by the current discharge
+# percentile category (USGS WaterWatch-style classes), with a
+# hydrograph panel below and an optional "tp" precipitation contour
+# overlay as best-effort context. The field arrives as
+# GageField.to_dict() (key "gage_records"), passed through directly —
+# never converted through a scalar grid. An empty record list renders
+# an explicit empty-frame message (never fabricated data); the
+# manifest carries the empty status and the USGS provenance.
+
+#: Primary parameter for marker coloring / hydrographs (discharge).
+_GAGE_PRIMARY = "00060"
+
+#: Percentile classes (lower, upper, label, color) — USGS
+#: WaterWatch-style: much-below / below / normal / above /
+#: much-above normal. A gage with no value at the frame date is drawn
+#: in _GAGE_NODATA_COLOR ("Not ranked").
+_GAGE_CATEGORIES = (
+    (0.0, 10.0, "Much below normal", "#d73027"),
+    (10.0, 25.0, "Below normal", "#fc8d59"),
+    (25.0, 75.0, "Normal", "#1a9850"),
+    (75.0, 90.0, "Above normal", "#91bfdb"),
+    (90.0, 100.0001, "Much above normal", "#4575b4"),
+)
+_GAGE_NODATA_COLOR = "#9e9e9e"
+_GAGE_NODATA_LABEL = "Not ranked"
+
+
+def _gage_unit_label(field: Dict[str, Any]) -> str:
+    """Display unit for the gage field's primary parameter."""
+    units = str(field.get("units", "native"))
+    params = field.get("parameters") or [_GAGE_PRIMARY]
+    primary = str(params[0])
+    if primary == "00065":
+        return "m" if units == "si" else "ft"
+    return "m³/s" if units == "si" else "ft³/s"
+
+
+def _normalize_gage_field(field: Any) -> List[Dict[str, Any]]:
+    """Return gage dicts: site_no/site_name/lat/lon + per-param series.
+
+    Accepts the ``"gage_records"`` list from ``GageField.to_dict()``
+    (dates as ISO strings, missing values as null) or a live
+    ``GageField`` object's ``.records``. Series become ``{"dates":
+    [date, ...], "values": np.ndarray, "unit": str}`` with nulls as
+    NaN — gaps stay gaps.
+    """
+    _, _, np = _require_plotting()
+    if isinstance(field, dict):
+        raw = field.get("gage_records", []) or []
+    else:
+        raw = getattr(field, "records", []) or []
+    gages: List[Dict[str, Any]] = []
+    for rec in raw:
+        if isinstance(rec, dict):
+            site_no = str(rec.get("site_no", ""))
+            site_name = str(rec.get("site_name", "") or site_no)
+            lat = rec.get("lat")
+            lon = rec.get("lon")
+            raw_series = rec.get("series", {}) or {}
+        else:
+            site_no = str(getattr(rec, "site_no", ""))
+            site_name = str(getattr(rec, "site_name", "") or site_no)
+            lat = getattr(rec, "lat", None)
+            lon = getattr(rec, "lon", None)
+            raw_series = getattr(rec, "series", {}) or {}
+        series: Dict[str, Dict[str, Any]] = {}
+        for code, s in raw_series.items():
+            if isinstance(s, dict):
+                dates = s.get("dates", [])
+                vals = s.get("values", [])
+            else:
+                dates = getattr(s, "dates", [])
+                vals = getattr(s, "values", [])
+            dlist = [_coerce_date(d) for d in dates]
+            vlist = [float("nan") if v is None else float(v) for v in vals]
+            unit = s.get("unit") if isinstance(s, dict) \
+                else getattr(s, "unit", "")
+            series[str(code)] = {"dates": dlist,
+                                 "values": np.asarray(vlist, dtype=float),
+                                 "unit": unit}
+        gages.append({"site_no": site_no, "site_name": site_name,
+                      "lat": float(lat) if lat is not None else float("nan"),
+                      "lon": float(lon) if lon is not None else float("nan"),
+                      "drain_area_sqmi": (rec.get("drain_area_sqmi")
+                                          if isinstance(rec, dict)
+                                          else getattr(rec, "drain_area_sqmi",
+                                                       None)),
+                      "series": series})
+    return gages
+
+
+def _value_percentile(values: np.ndarray, value: float) -> Optional[float]:
+    """Percentile of ``value`` within finite ``values`` (0–100).
+
+    Same documented rule as
+    ``GageRecord.percentile_of_record``: ``100 * (# below) / (n - 1)``;
+    a single-value record ranks 50; no finite values -> None.
+    """
+    _, _, np = _require_plotting()
+    finite = values[np.isfinite(values)]
+    if finite.size == 0 or not value == value:
+        return None
+    if finite.size == 1:
+        return 50.0
+    return 100.0 * float(np.sum(finite < value)) / (finite.size - 1)
+
+
+def _gage_category(percentile: Optional[float]) -> Tuple[str, str]:
+    """(label, color) for a percentile, or the not-ranked style."""
+    if percentile is None:
+        return _GAGE_NODATA_LABEL, _GAGE_NODATA_COLOR
+    for lo, hi, label, color in _GAGE_CATEGORIES:
+        if lo <= percentile < hi:
+            return label, color
+    return _GAGE_NODATA_LABEL, _GAGE_NODATA_COLOR
+
+
+def _gage_frame_dates(spec) -> List[_dt.date]:
+    """Frame dates for the gage renderer (daily, capped at MAX_FRAMES)."""
+    # Reuse the storm renderer's date logic: daily branch covers the
+    # USGS daily cadence (cadence is pinned to "daily" by the parser).
+    return _storm_frame_dates(spec)
+
+
+def _regional_median_series(gages: List[Dict[str, Any]],
+                            start: _dt.date, end: _dt.date,
+                            parameter: str = _GAGE_PRIMARY
+                            ) -> Tuple[List[_dt.date], np.ndarray]:
+    """Daily median across gages (documented multi-gage hydrograph rule).
+
+    For each date in [start, end], the median of the finite values
+    across all gages carrying ``parameter``; dates with no valid value
+    anywhere are NaN. Mirrors ``GageField.regional_median`` for the
+    dict field form the renderer receives.
+    """
+    _, _, np = _require_plotting()
+    ndays = (end - start).days + 1
+    dates = [start + _dt.timedelta(days=k) for k in range(ndays)]
+    grid = np.full((len(gages), ndays), np.nan)
+    for i, g in enumerate(gages):
+        s = g["series"].get(parameter)
+        if s is None:
+            continue
+        vals = np.asarray(s["values"], dtype=float)
+        for d, v in zip(s["dates"], vals):
+            k = (d - start).days
+            if 0 <= k < ndays and v == v:
+                grid[i, k] = v
+    with np.errstate(all="ignore"):
+        med = np.nanmedian(grid, axis=0)
+    return dates, med
+
+
+def _draw_tp_overlay(ax_m, ov, frame_date) -> bool:
+    """Draw white precipitation contour lines from an overlay dict.
+
+    ``ov`` is a ``{"times", "lats", "lons", "grid"}`` dict (the
+    pipeline attaches it as ``"overlay_grids"``). The nearest overlay
+    timestep at/below the frame date is drawn. Returns True when
+    contours were drawn.
+    """
+    _, _, np = _require_plotting()
+    times = [str(t)[:10] for t in ov.get("times", [])]
+    fdate = frame_date.isoformat() if hasattr(frame_date, "isoformat") \
+        else str(frame_date)[:10]
+    idx = max([j for j, d in enumerate(times) if d <= fdate] or [0])
+    grid = np.asarray(ov["grid"][idx], dtype=float)
+    if not np.any(np.isfinite(grid)):
+        return False
+    step = _OVERLAY_DEFAULTS.get("tp", {}).get("step", 5.0)
+    lo = float(np.nanmin(grid))
+    hi = float(np.nanmax(grid))
+    levels = np.arange(np.floor(lo / step) * step,
+                       np.ceil(hi / step) * step + step / 2, step)
+    if len(levels) < 2:
+        return False
+    lats = np.asarray(ov["lats"], dtype=float)
+    lons = np.asarray(ov["lons"], dtype=float)
+    cs = ax_m.contour(lons, lats, grid, levels=levels, colors="white",
+                      linewidths=1.2, alpha=0.7, zorder=4)
+    ax_m.clabel(cs, fmt="%g mm", fontsize=12, colors="white")
+    return True
+
+
+def _render_gage_field(spec, field, series, out_dir: str,
+                       layout: str, style: str,
+                       want_underlay: bool) -> Tuple[List[str], str]:
+    """Render USGS streamgage daily values: gage markers + hydrograph.
+
+    Map panel: one marker per gage at its (lon, lat), colored by the
+    current value's percentile category within its own record (USGS
+    WaterWatch-style classes); gages with no value at the frame date
+    draw gray ("Not ranked"). Hydrograph panel: the series for
+    ``spec.gage_site`` when it names a known site, else the
+    documented regional-median rule (daily median across gages).
+    Optional ``"tp"`` precipitation context draws as white contours
+    (the pipeline attaches it as ``"overlay_grids"``; a requested but
+    unfetched overlay is recorded "absent", never silently dropped).
+    No gages -> an explicit empty-frame message and an ``"empty"``
+    manifest status — never fabricated data.
+    """
+    plt, mdates, np = _require_plotting()
+    from matplotlib.lines import Line2D
+
+    gages = _normalize_gage_field(field)
+    overlays = _normalize_storm_overlays(field)  # same dict contract
+    frame_dates = _gage_frame_dates(spec)
+    requested = [str(o) for o in (getattr(spec, "overlays", None) or ())]
+    tp_context = {name: ("ok" if name in overlays else "absent")
+                  for name in requested}
+    field_dict = field if isinstance(field, dict) else {}
+    unit = _gage_unit_label(field_dict)
+
+    underlay_rgba, underlay_extent, coastline_segs, underlay_status = \
+        _fetch_underlay_once(spec, plt, np, want_underlay)
+
+    st = _STYLE[style]
+    region = get_region(spec.region_key)
+    region_name = region["name"] if region else spec.region_key
+    lon_min, lat_min, lon_max, lat_max = spec.bbox
+
+    # Hydrograph source: a selected gage when spec.gage_site names one,
+    # else the documented regional-median rule.
+    gage_site = str(getattr(spec, "gage_site", "") or "").strip()
+    selected = next((g for g in gages if g["site_no"] == gage_site), None)
+    start = _coerce_date(spec.start)
+    end = _coerce_date(spec.end)
+    if selected is not None:
+        s = selected["series"].get(_GAGE_PRIMARY, {})
+        hydro_dates = list(s.get("dates", []))
+        hydro_vals = np.asarray(s.get("values", []), dtype=float)
+        hydro_title = (f"Hydrograph — {selected['site_name']} "
+                       f"({selected['site_no']})")
+        hydro_rule = f"site:{selected['site_no']}"
+    else:
+        hydro_dates, hydro_vals = _regional_median_series(
+            gages, start, end, _GAGE_PRIMARY)
+        n_hg = len(gages)
+        hydro_title = (f"Regional median discharge — {n_hg} "
+                       f"gage{'s' if n_hg != 1 else ''}")
+        hydro_rule = "regional-median"
+    hydro_vals = np.asarray(hydro_vals, dtype=float)
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    frames: List[str] = []
+    timestamps: List[str] = []
+    empty = not gages
+
+    for n, frame_date in enumerate(frame_dates):
+        fig = plt.figure(figsize=(10.8, 19.2), dpi=100)
+        fig.patch.set_facecolor(st["face"])
+        _draw_title_block(fig, spec, st, region_name)
+
+        # Map panel ------------------------------------------------------
+        ax_m = fig.add_axes([0.04, 0.36, 0.92, 0.52])
+        ax_m.set_facecolor(st["axes"])
+        if underlay_rgba is not None:
+            ax_m.imshow(underlay_rgba, extent=underlay_extent,
+                        origin="upper", aspect="auto", zorder=1)
+        # Optional precipitation context contours (IMERG/ERA5 tp) under
+        # the markers.
+        for ov_name in requested:
+            ov = overlays.get(ov_name)
+            if ov is None:
+                continue
+            cfg = _OVERLAY_DEFAULTS.get(ov_name, {"step": 1.0, "unit": ""})
+            step = cfg["step"]
+            idx = max([j for j, d in enumerate(ov["times"])
+                       if d <= frame_date] or [0])
+            ov_grid = ov["grid"][idx]
+            if np.all(np.isnan(ov_grid)):
+                continue
+            lo = float(np.nanmin(ov_grid))
+            hi = float(np.nanmax(ov_grid))
+            levels = np.arange(np.floor(lo / step) * step,
+                               np.ceil(hi / step) * step + step / 2,
+                               step)
+            if len(levels) < 2:
+                continue
+            cs = ax_m.contour(
+                ov["lons"], ov["lats"], ov_grid, levels=levels,
+                colors="white", linewidths=1.2, alpha=0.7, zorder=4)
+            ax_m.clabel(cs, fmt=f"%g {cfg['unit']}".strip(),
+                        fontsize=12, colors="white")
+
+        shown_cats: List[Tuple[str, str]] = []
+        if empty:
+            reason = ""
+            prov = field_dict.get("provenance", {}) or {}
+            if prov.get("empty_reason"):
+                reason = str(prov["empty_reason"])
+            ax_m.text(
+                0.5, 0.5,
+                "No USGS streamgages with daily data\nin this window",
+                transform=ax_m.transAxes, ha="center", va="center",
+                fontsize=24, weight="bold", color=st["text"],
+                linespacing=1.6)
+            if reason:
+                ax_m.text(0.5, 0.38, reason[:110],
+                          transform=ax_m.transAxes, ha="center",
+                          va="center", fontsize=13, color=st["muted"],
+                          wrap=True)
+        else:
+            for g in gages:
+                s = g["series"].get(_GAGE_PRIMARY)
+                value = float("nan")
+                if s is not None:
+                    for d, v in zip(s["dates"], s["values"]):
+                        if d == frame_date:
+                            value = float(v)
+                            break
+                pct = (_value_percentile(s["values"], value)
+                       if s is not None else None)
+                label, color = _gage_category(pct)
+                if (label, color) not in shown_cats:
+                    shown_cats.append((label, color))
+                if g["lat"] == g["lat"] and g["lon"] == g["lon"]:
+                    ax_m.scatter([g["lon"]], [g["lat"]], s=170,
+                                 c=color, edgecolors="black",
+                                 linewidths=1.5, zorder=8)
+            if selected is not None:
+                ax_m.text(selected["lon"], selected["lat"],
+                          f"  {selected['site_no']}",
+                          fontsize=14, weight="bold", color="white",
+                          zorder=9,
+                          bbox=dict(boxstyle="round,pad=0.35", fc="black",
+                                    ec="none", alpha=0.6))
+        if coastline_segs:
+            coast_color = _UNDERLAY_COAST_COLOR[style]
+            for seg in coastline_segs:
+                ax_m.plot(seg["lons"], seg["lats"], color=coast_color,
+                          lw=1.2, zorder=5, solid_capstyle="round")
+        ax_m.set_xlim(lon_min, lon_max)
+        ax_m.set_ylim(lat_min, lat_max)
+        ax_m.tick_params(colors=st["muted"], labelsize=14)
+        for spine in ax_m.spines.values():
+            spine.set_color(st["muted"])
+        if shown_cats:
+            handles = [Line2D([0], [0], marker="o", color="w",
+                              markerfacecolor=color, markersize=12,
+                              markeredgecolor="black")
+                       for _, color in shown_cats]
+            labels = [label for label, _ in shown_cats]
+            leg = ax_m.legend(handles, labels, loc="lower left",
+                              fontsize=13, framealpha=0.75,
+                              facecolor=st["face"], edgecolor=st["muted"])
+            for txt in leg.get_texts():
+                txt.set_color(st["text"])
+        # Burned-in timestamp.
+        ax_m.text(
+            0.97, 0.03, frame_date.isoformat(), transform=ax_m.transAxes,
+            ha="right", va="bottom", fontsize=22, weight="bold",
+            color="white",
+            bbox=dict(boxstyle="round,pad=0.4", fc="black", ec="none",
+                      alpha=0.55))
+
+        # Hydrograph panel -------------------------------------------------
+        ax_s = fig.add_axes([0.08, 0.08, 0.84, 0.24])
+        ax_s.set_facecolor(st["axes"])
+        ax_s.tick_params(colors=st["muted"], labelsize=14)
+        for spine in ax_s.spines.values():
+            spine.set_color(st["muted"])
+        ax_s.set_title(hydro_title, color=st["text"], fontsize=20,
+                       loc="left", pad=8)
+        if hydro_dates and np.any(np.isfinite(hydro_vals)):
+            ax_s.plot(mdates.date2num(hydro_dates), hydro_vals,
+                      color=st["series"], lw=3)
+            ax_s.axvline(mdates.date2num(frame_date), color=st["text"],
+                         lw=2, ls="--", alpha=0.9)
+            at = [j for j, d in enumerate(hydro_dates) if d <= frame_date]
+            if at:
+                j = at[-1]
+                if hydro_vals[j] == hydro_vals[j]:
+                    ax_s.scatter([mdates.date2num(hydro_dates[j])],
+                                 [hydro_vals[j]], s=90,
+                                 color=st["series"],
+                                 edgecolors=st["text"], zorder=5)
+            ax_s.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+            ax_s.set_ylabel(f"discharge ({unit})", color=st["muted"],
+                            fontsize=16)
+        else:
+            ax_s.text(0.5, 0.5, "No discharge values in this window",
+                      transform=ax_s.transAxes, ha="center", va="center",
+                      fontsize=20, color=st["muted"])
+            ax_s.set_xlim(0, 1)
+            ax_s.set_ylim(0, 1)
+
+        # Footer ------------------------------------------------------------
+        footer_var = spec.variable
+        if requested:
+            drawn = [o for o in requested if o in overlays]
+            missing = [o for o in requested if o not in overlays]
+            if drawn:
+                footer_var += " + " + " + ".join(f"{o} contours"
+                                                 for o in drawn)
+            if missing:
+                footer_var += (f" ({', '.join(missing)} context "
+                               "unavailable)")
+        if empty:
+            footer_var += " · no gages in window"
+        _draw_footer(fig, spec, st, footer_var)
+
+        frame_path = out / f"frame_{n + 1:04d}.png"
+        fig.savefig(frame_path, facecolor=fig.get_facecolor())
+        plt.close(fig)
+        frames.append(str(frame_path.resolve()))
+        timestamps.append(frame_date.isoformat())
+
+    gage_meta = []
+    for g in gages:
+        s = g["series"].get(_GAGE_PRIMARY, {})
+        vals = np.asarray(s.get("values", []), dtype=float)
+        n_valid = int(np.sum(np.isfinite(vals)))
+        latest = float("nan")
+        if n_valid:
+            idx = np.flatnonzero(np.isfinite(vals))
+            latest = float(vals[int(idx[-1])])
+        pct = _value_percentile(vals, latest)
+        label, _ = _gage_category(pct)
+        gage_meta.append({
+            "site_no": g["site_no"], "site_name": g["site_name"],
+            "lat": g["lat"], "lon": g["lon"],
+            "drain_area_sqmi": g.get("drain_area_sqmi"),
+            "n_values": n_valid,
+            "latest_value": (None if latest != latest else latest),
+            "latest_percentile": pct,
+            "category": label,
+            "unit": unit,
+        })
+
+    manifest = {
+        "schema": SCHEMA_ID,
+        "spec": spec.to_dict(),
+        "frames": frames,
+        "timestamps": timestamps,
+        "render": {
+            "layout": layout,
+            "style": style,
+            "cmap": "gage-percentile",
+            "vmin": None,
+            "vmax": None,
+            "n_frames": len(frames),
+            "engine": f"survey-viz {__version__}",
+            "created": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "underlay": underlay_status,
+            "gages": gage_meta,
+            "hydrograph": hydro_rule,
+            "hydrograph_title": hydro_title,
+            "precipitation_context": tp_context or None,
+            "empty": empty,
+            "usgs": dict(field_dict.get("provenance", {})),
         },
     }
     manifest_path = out / "manifest.json"

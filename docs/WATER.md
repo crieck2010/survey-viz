@@ -35,11 +35,12 @@ Disambiguation (the honest-routing rules — documented, tested):
   PARSER.md §6a). Only when `water-storage` already won the primary
   race does "vs rainfall" / "with rainfall" wording add `"tp"` as a
   contour overlay.
-- **River discharge is refused, not rendered.** "streamflow" / "river
-  discharge" → `variable="streamflow"`, which has no fetch adapter
-  (USGS streamgages are item 11 of the remote-sensing program) — an
-  honest no-adapter refusal naming the future adapter, never a GRACE
-  map.
+- **River discharge routes to USGS streamgages, not GRACE.**
+  "streamflow" / "river discharge" → `variable="streamflow"`,
+  `source="usgs"` (USGS Water Services NWIS, survey-currents
+  v0.13.0+) — see docs/STREAMFLOW.md. GRACE anomalies are monthly
+  land-water-storage changes; discharge is point-source daily gage
+  data. Never a GRACE map.
 - **Sea level is refused, not rendered.** "sea level" (without
   "pressure") → `variable="sea-level"`, which has no fetch adapter —
   sea level is satellite altimetry, a different observable from GRACE
@@ -105,8 +106,9 @@ precipitation, resampled to the GRACE grid) and recorded as
   2015-05 are missing from the time axis but absent from the
   attribute) — gap detection diffs the actual time axis, never the
   attribute alone.
-- No GRACE adapter exists for river discharge, streamflow, or sea
-  level — those stay honest refusals (see above).
+- No GRACE adapter exists for sea level — it stays an honest
+  refusal (see above). River discharge / streamflow routes to USGS
+  streamgages (docs/STREAMFLOW.md), not GRACE.
 - Precipitation context ("vs rainfall") is best-effort: ERA5 needs a
   free CDS account; without credentials the overlay degrades to
   `"absent"`, not an error.

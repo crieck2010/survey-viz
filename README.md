@@ -71,6 +71,12 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   `chlorophyll`; **wind(s)/windy/gale(s)** → `wind`; **pressure/isobar(s)** →
   `msl`; **air temperature/heatwave/heat** → `t2m`;
   **rain/rainfall/precipitation/deluge** → `tp`;
+  **streamflow/river discharge/stream discharge/river
+  flow/gage(s)/streamgage(s)** → `streamflow` (USGS Water Services
+  NWIS streamgages — `survey-currents` v0.13.0+; checked *before* the
+  earliest-wins race so `currents`' bare "stream"/"flow" never steals
+  "river flow"); "flooding after heavy rainfall" → `streamflow` +
+  `tp` overlay;
   **fire(s)/wildfire(s)/burning/burn(s)** → `fire` (NASA FIRMS active-fire
   detections); **burn scar(s)/burned area(s)/burn severity** →
   `burn-scar` (parses, but has no fetch adapter — honest refusal naming
@@ -136,9 +142,26 @@ frames, manifest = render_viz(spec, field, series, out_dir="frames")
   (CSR GRACE/GRACE-FO RL06.3 terrestrial water storage anomalies —
   monthly, cm LWE, land-only, 2002–present, keyless —
   `survey-currents` v0.12.0+) with an inspectable `source_reason`
-  (see docs/WATER.md); "sea level" (without "pressure") and "river
-  discharge" are honest no-adapter refusals, never GRACE maps.
-  Whenever the parser pins a source it
+  (see docs/WATER.md); "sea level" (without "pressure") is an honest
+  no-adapter refusal, never a GRACE map. `streamflow` always pins
+  `source="usgs"` (USGS Water Services NWIS streamgage daily values —
+  daily MEAN discharge/gage height, keyless, US-only —
+  `survey-currents` v0.13.0+) with an inspectable `source_reason`
+  (see docs/STREAMFLOW.md); keywords: **streamflow**, **river
+  discharge**, **stream discharge**, **river flow**, **gage(s)**,
+  **streamgage(s)** — checked *before* the earliest-wins race so the
+  broad `currents` patterns (bare "stream"/"flow") never misread them
+  as ocean currents (a bare ocean/current "flow" request still routes
+  to `currents`). "Flooding after heavy rainfall" routes to
+  `streamflow` primary + a best-effort `tp` precipitation contour
+  overlay (the pipeline degrades to "absent" when it cannot be
+  fetched — never silently dropped). Gages are point/time-series
+  data: the dedicated gage renderer draws markers colored by the
+  current discharge percentile category over the GEBCO/Natural Earth
+  underlay plus a hydrograph panel (selected gage via
+  `spec.gage_site`, else the documented regional-median rule); no
+  gages in the window renders an explicit empty-frame message, never
+  fabricated data. Whenever the parser pins a source it
   records `VizSpec.source_reason`, and
   `viz.sources.explain_source(spec)` explains any spec's routing
   (pinned, default, or refused).
@@ -182,7 +205,10 @@ Full grammar: [docs/PARSER.md](docs/PARSER.md).
   need a different product; power-outage's message explains outage
   mapping is change detection, not a single-epoch map;
   country-borders' message explains Natural Earth vectors are an
-  underlay, not a variable). See
+  underlay, not a variable). `streamflow` (river discharge) routes to
+  USGS Water Services NWIS streamgages (keyless, US-only —
+  `survey-currents` v0.13.0+); "sea level" without "pressure" stays an
+  honest refusal (satellite altimetry ≠ GRACE water storage). See
   `viz.sources.resolve_source()` and the `notes` field in
   `data/regions.yaml`.
 - The map panel is a plain `pcolormesh` over the region bbox (no cartopy

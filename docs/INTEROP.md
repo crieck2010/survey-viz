@@ -21,6 +21,14 @@ duck-typed **field** object — anything with:
 
 …or a plain dict `{"times", "lats", "lons", "values"}` (numpy arrays or lists).
 
+**Non-gridded field shapes.** Some sources are not scalar grids:
+- **Storm tracks** (`source="ibtracs"`): an IBTrACS `StormField`
+  (or its `to_dict()` form) renders as track polylines.
+- **Streamgages** (`source="usgs"`): a USGS `GageField` (or its
+  `to_dict()` form) renders as gage markers + hydrograph panel —
+  never a scalar grid. See docs/STREAMFLOW.md; the model is shared
+  with survey-flood.
+
 survey-viz **never imports survey-currents**. A `GlseaField`-shaped object
 satisfies the protocol as-is. If the field's coordinates extend beyond the
 spec bbox, the map panel clips to the spec bbox via axis limits.

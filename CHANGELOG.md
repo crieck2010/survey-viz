@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-09-27
+
+### Added
+- USGS streamgages (`KNOWN_SOURCES += ("usgs",)`, source label "USGS
+  Water Services (NWIS)"):
+  - `streamflow` always pins `source="usgs"` (USGS Water Services
+    NWIS daily-mean streamgage values, `survey-currents` v0.13.0+)
+    with an inspectable `source_reason`; cadence is always daily.
+    Keywords: "streamflow", "river discharge", "stream discharge",
+    "river flow", "gage(s)", "gauge(s)", "streamgage(s)", "stream
+    gauge(s)" — checked *before* the earliest-wins race so the broad
+    `currents` patterns (bare "stream"/"flow") never misread them as
+    ocean currents (a bare ocean/current "flow" request still routes
+    to `currents`).
+  - Dedicated point/time-series gage renderer (no scalar-grid
+    conversion): gage markers over the GEBCO/Natural Earth underlay,
+    colored by the current discharge percentile category
+    (USGS WaterWatch-style classes), plus a hydrograph panel —
+    `spec.gage_site` (a NWIS site number) selects the gage, else the
+    documented regional-median rule; missing daily values stay gaps.
+  - "Flooding after heavy rainfall" routes to `streamflow` primary +
+    a best-effort `tp` precipitation contour overlay (degrades to
+    "absent", never silently dropped); flood wording alone is not
+    streamflow (flood-inundation mapping is survey-flood's domain).
+  - Empty gage sets render an explicit empty-frame message, never
+    fabricated data; `GageField` is shared with survey-flood.
+  - Docs: new docs/STREAMFLOW.md; updated docs/PARSER.md (§2, §6d,
+    new §6e), docs/WATER.md, docs/INTEROP.md, README.
+
 ## [0.11.0] - 2026-09-27
 
 ### Added

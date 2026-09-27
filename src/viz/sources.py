@@ -46,10 +46,11 @@ Routing rules (documented in docs/PARSER.md):
   RL06.3 terrestrial water storage anomalies, monthly, cm LWE,
   land-only — the archive is global, so no regional restriction
   applies).
-* ``"streamflow"`` (river discharge) has no fetch adapter -> ``""``:
-  no river-discharge adapter exists yet (streamgages are item 11 of
-  the remote-sensing program), so it is refused rather than
-  misrendered.
+* ``"streamflow"`` anywhere -> ``"usgs"`` (USGS Water Services NWIS
+  streamgage daily values, daily MEAN discharge/gage height — the
+  network is US-only, so bboxes outside USGS coverage yield an honest
+  empty field; the gage renderer turns that into an explicit
+  empty-frame message rather than fabricated data).
 * ``"sea-level"`` (without "pressure") has no fetch adapter ->
   ``""``: sea level is satellite altimetry, a different observable
   from GRACE terrestrial water storage, so it is refused rather than
@@ -113,6 +114,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "gebco": "GEBCO 2024",
     "ibtracs": "NOAA IBTrACS v04r01",
     "grace": "CSR GRACE/GRACE-FO RL06.3",
+    "usgs": "USGS Water Services (NWIS)",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -131,6 +133,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "gebco": ("currents.basemaps", "fetch_gebco"),
     "ibtracs": ("currents.storms", "fetch_ibtracs"),
     "grace": ("currents.grace", "fetch_grace"),
+    "usgs": ("currents.streamgages", "fetch_usgs"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -149,6 +152,7 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "gebco": "0.10.0",
     "ibtracs": "0.11.0",
     "grace": "0.12.0",
+    "usgs": "0.13.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).
@@ -223,12 +227,16 @@ def default_source(variable: str, region_key: str) -> str:
     # the parser's variable race.
     if variable == "water-storage":
         return "grace"
-    # "streamflow" (river discharge) has no adapter: streamgages are
-    # item 11 of the remote-sensing program, so it is refused rather
-    # than misrendered. "sea-level" (without "pressure") has no
-    # adapter either: sea level is satellite altimetry, a different
+    # "streamflow" (river discharge) routes globally to USGS Water
+    # Services — the NWIS network is US-only, but the adapter answers
+    # bboxes outside USGS coverage with an honest empty field (never
+    # fabricated data), and the gage renderer turns that into an
+    # explicit empty-frame message. "sea-level" (without "pressure")
+    # has no adapter: sea level is satellite altimetry, a different
     # observable from GRACE terrestrial water storage — refusing keeps
     # the parser from answering it with a GRACE map.
+    if variable == "streamflow":
+        return "usgs"
     # "power-outage" (blackout / power-outage wording) has no adapter:
     # outage mapping is temporal change detection across two or more
     # epochs, and a single daily Black Marble map cannot show it — so
@@ -336,6 +344,9 @@ def explain_source(spec: Any) -> str:
         "grace": "water storage / groundwater -> CSR GRACE/GRACE-FO "
                  "RL06.3 terrestrial water storage anomalies (monthly, "
                  "cm LWE, land-only)",
+        "usgs": "streamflow / river discharge -> USGS Water Services "
+                "(NWIS) streamgage daily values (keyless, US-only; "
+                "empty field outside USGS coverage)",
     }.get(source, f"variable {variable!r}")
     return (f"source {source!r} ({label}): regional default — {default_why}; "
             "the parser did not pin a source.")
