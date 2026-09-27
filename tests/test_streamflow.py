@@ -175,9 +175,19 @@ def test_usgs_adapter_and_min_version():
     assert src_mod._SOURCE_MIN_VERSIONS["usgs"] == "0.13.0"
 
 
-def test_fetch_for_source_usgs_names_peer_fix():
-    # survey-currents is not installed here: the ImportError must name
-    # the >= 0.13.0 requirement.
+def test_fetch_for_source_usgs_names_peer_fix(monkeypatch):
+    # Environment-independent: simulate a peer without the streamgages
+    # module (the real env either has currents installed or not).
+    import importlib
+    real_import = importlib.import_module
+
+    def fake_import(name, *a, **k):
+        if name == "currents.streamgages":
+            raise ImportError("No module named 'currents.streamgages' "
+                              "(simulated old peer)")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
     with pytest.raises(ImportError, match="0.13.0"):
         fetch_for_source("usgs")
 
