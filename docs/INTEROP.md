@@ -141,6 +141,57 @@ Two new engine entry points keep the app layer thin:
   Scales with frame count (one pass over the grids); caption
   computation is O(frames) scalars after the render loop.
 
+### Platform canvases from survey-layout (v0.18.0)
+
+`render_viz(..., canvas=None)` accepts a platform canvas from the new
+**survey-layout** engine (github.com/crieck2010/survey-layout) —
+platform aspect ratios with measured safe zones:
+
+- TikTok / Instagram Reels / YouTube Shorts — 1080×1920, 9:16
+- X portrait — 1080×1350, 4:5
+- Square — 1080×1080, 1:1
+- Widescreen — 1920×1080, 16:9
+- Legacy — the historical 1080×1920 geometry (== `canvas=None`)
+
+The handoff is a plain dict (duck-typed — survey-viz never imports
+survey-layout):
+
+```python
+from viz import render_viz
+from layout import build_canvas, to_viz_canvas   # survey-layout, in the caller
+
+canvas = to_viz_canvas(build_canvas("tiktok", flavor="quake"))
+# {"platform": "tiktok", "flavor": "quake", "width": 1080, "height": 1920,
+#  "regions": {"title": [...], "map": [...], "ranking": [...],
+#              "chart": [...], "caption": [...], "footer": [...]},
+#  "unsafe": [[0.0, 0.0, 1.0, 0.1875]]}
+
+frames, manifest = render_viz(spec, field, series,
+                              out_dir="frames", canvas=canvas)
+```
+
+Rules:
+
+- Frame dimensions follow `canvas["width"/"height"]`; every region
+  becomes a Matplotlib axes fraction, so arbitrary platform shapes
+  work with no engine change.
+- All four render paths (continuous, storm tracks, streamgages,
+  earthquakes) accept canvases; the earthquake flavor adds the
+  `ranking` region (derived between map and chart when absent).
+- Malformed canvases raise `ValueError` before any frame renders.
+- `canvas=None` (default) is pixel-equivalent to the historical
+  layout — legacy behavior is unchanged.
+- Manifest records `render.canvas` with platform/flavor/width/height/
+  region names for provenance.
+- Region rectangles come from survey-layout's `validate_canvas()`:
+  inside the canvas, clear of platform chrome, and collision-free
+  (except the intentionally floating caption chip). survey-viz
+  trusts but re-validates shape on entry (`_resolve_canvas`).
+- Dataset selection stays where it belongs: survey-viz's
+  `parse_description` picks the dataset/combination; survey-layout
+  consumes the resulting render plan (flavor = `"quake"` when the
+  parsed variable is earthquakes, `"standard"` otherwise).
+
 ## Schema stability
 
 - `survey-viz.frame-manifest/1.0` is frozen for the 0.1.x line. New fields

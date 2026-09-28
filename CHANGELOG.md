@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-09-28
+
+### Added
+- `render_viz(..., canvas=None)`: platform aspect-ratio and safe-zone
+  canvases from the new **survey-layout** engine. A canvas is a plain
+  dict — `{"platform", "flavor", "width", "height", "regions",
+  "unsafe"}` — resolved by `_resolve_canvas()` into figure size and
+  Matplotlib axes fractions for title/map/chart/caption/footer (plus
+  `ranking` for the earthquake flavor). Malformed canvases raise
+  `ValueError` before any frame is rendered. When `canvas=None`
+  (default), the historical 1080×1920 layout is used unchanged.
+  Canvas provenance is recorded in every manifest at
+  `render.canvas`. survey-viz **never imports survey-layout**; the
+  contract is duck-typed via `layout.to_viz_canvas()` /
+  `layout.validate_canvas()`. See docs/INTEROP.md and the
+  survey-layout repo (github.com/crieck2010/survey-layout).
+
 ## [0.17.0] - 2026-09-28
 
 ### Added

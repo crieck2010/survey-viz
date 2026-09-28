@@ -10,7 +10,9 @@ Three stages, **zero AI, zero network** in the engine:
 3. **Render** — spec + data → PNG frames + `manifest.json` (`viz demo`, `viz render`)
 
 Peers are optional and duck-typed: `survey-currents` feeds it field data,
-`survey-animate` encodes its frames into MP4/GIF/WebM reels. Never hard
+`survey-animate` encodes its frames into MP4/GIF/WebM reels, and
+`survey-layout` (v0.1.0+) supplies platform aspect-ratio/safe-zone
+canvases via `layout.to_viz_canvas()`. Never hard
 imports, never hard dependencies.
 
 ## Install
@@ -285,6 +287,16 @@ attempted. Uploads work too: `suggest_aesthetic(image_bytes)`.
   as requested-not-applied). `VizSpec.caption` prepends a custom line
   to the frame footer without erasing per-renderer honesty wording
   (e.g. the quake catalog's "observed events — not a forecast").
+- **Platform layouts** (new in v0.18.0): `render_viz(...,
+  canvas=...)` accepts a platform canvas from the **survey-layout**
+  engine (e.g. TikTok/Instagram 9:16, X 4:5, square 1:1, widescreen
+  16:9) — frame dimensions follow the canvas and title/map/chart/
+  caption/footer (plus the earthquake ranking panel) are placed clear
+  of each platform's measured chrome (unsafe zones). The canvas is a
+  plain dict produced by `layout.to_viz_canvas()`; `canvas=None`
+  (default) keeps the historical 1080×1920 layout; malformed canvases
+  fail fast with `ValueError`; provenance lands in
+  `manifest["render"]["canvas"]`. See [docs/INTEROP.md](docs/INTEROP.md).
 - **Time**: `past N years`, `last N years`, `past N months`, `last summer`
   (most recent fully-completed Jun–Aug), `this year`, `2015 to 2020` /
   `2015-2020`, `since 2018`. **No time phrase → past 1 year.**

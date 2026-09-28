@@ -413,9 +413,9 @@ def _wrap_title(title: str, width: int = 34) -> str:
     return "\n".join(lines)
 
 
-def _draw_title_block(fig, spec, st, region_name: str) -> None:
+def _draw_title_block(fig, spec, st, region_name: str, rect=None) -> None:
     """Shared title block (map frames and storm-track frames)."""
-    ax_t = fig.add_axes([0.0, 0.90, 1.0, 0.10])
+    ax_t = fig.add_axes(rect if rect is not None else [0.0, 0.90, 1.0, 0.10])
     ax_t.axis("off")
     ax_t.set_facecolor(st["face"])
     ax_t.text(
@@ -440,13 +440,13 @@ def _draw_title_block(fig, spec, st, region_name: str) -> None:
     )
 
 
-def _draw_caption(fig, st, text: str, fontsize: int = 22) -> None:
+def _draw_caption(fig, st, text: str, fontsize: int = 22, rect=None) -> None:
     """Lower-third story caption, drawn above the footer strip.
 
     A rounded, semi-transparent chip centered on the figure — visible
     over any map without obscuring the data panel.
     """
-    ax_c = fig.add_axes([0.0, 0.065, 1.0, 0.075])
+    ax_c = fig.add_axes(rect if rect is not None else [0.0, 0.065, 1.0, 0.075])
     ax_c.axis("off")
     ax_c.set_facecolor(st["face"])
     ax_c.text(
@@ -462,7 +462,7 @@ def _draw_caption(fig, st, text: str, fontsize: int = 22) -> None:
     )
 
 
-def _draw_footer(fig, spec, st, footer_var: str, fontsize: int = 16) -> None:
+def _draw_footer(fig, spec, st, footer_var: str, fontsize: int = 16, rect=None) -> None:
     """Shared footer (map frames and storm-track frames).
 
     ``fontsize`` is 16 everywhere except the earthquakes footer,
@@ -475,7 +475,7 @@ def _draw_footer(fig, spec, st, footer_var: str, fontsize: int = 16) -> None:
     honesty wording (e.g. the quake catalog's "observed events — not a
     forecast") is never erased by a custom caption.
     """
-    ax_f = fig.add_axes([0.0, 0.0, 1.0, 0.06])
+    ax_f = fig.add_axes(rect if rect is not None else [0.0, 0.0, 1.0, 0.06])
     ax_f.axis("off")
     ax_f.set_facecolor(st["face"])
     caption = getattr(spec, "caption", None)
@@ -582,6 +582,100 @@ def _fetch_underlay_once(spec, plt, np, want: bool):
     return rgba, extent, coastlines, status
 
 
+# ---------------------------------------------------------------------------
+# Platform canvas support (survey-layout interop)
+#
+# ``render_viz(..., canvas=...)`` accepts a plain dict — the shape built
+# by ``layout.to_viz_canvas`` — so this module never imports the
+# survey-layout peer (peers stay optional). When ``canvas`` is None the
+# historical hardcoded 1080x1920 layout is used, pixel-identical to
+# <= 0.17.
+# ---------------------------------------------------------------------------
+
+#: Legacy region rects (figure fractions), reproduced exactly from the
+#: hardcoded layout of survey-viz <= 0.17.
+_LEGACY_RECTS = {
+    "title": [0.0, 0.90, 1.0, 0.10],
+    "map": [0.04, 0.36, 0.92, 0.52],
+    "chart": [0.08, 0.08, 0.84, 0.24],
+    "caption": [0.0, 0.065, 1.0, 0.075],
+    "footer": [0.0, 0.0, 1.0, 0.06],
+}
+
+#: Legacy rects for the earthquake renderer (map + largest-events
+#: ranking panel + daily-count chart).
+_QUAKE_LEGACY_RECTS = {
+    "title": [0.0, 0.90, 1.0, 0.10],
+    "map": [0.04, 0.52, 0.92, 0.36],
+    "ranking": [0.04, 0.30, 0.92, 0.20],
+    "chart": [0.08, 0.08, 0.84, 0.18],
+    "caption": [0.0, 0.065, 1.0, 0.075],
+    "footer": [0.0, 0.0, 1.0, 0.06],
+}
+
+
+def _resolve_canvas(canvas, flavor="standard"):
+    """Resolve a ``canvas`` dict into ``(width, height, rects, info)``.
+
+    ``rects`` maps region name -> ``[left, bottom, width, height]``
+    figure fractions. ``info`` is the JSON-able provenance record (or
+    None for the legacy layout). ``flavor`` is ``"standard"`` or
+    ``"quake"`` (the earthquake renderer has an extra ranking panel).
+
+    Fail-fast: a malformed canvas raises ValueError before any frame
+    renders, so a typo can't silently misplace a title under a
+    platform's status bar.
+    """
+    base = _QUAKE_LEGACY_RECTS if flavor == "quake" else _LEGACY_RECTS
+    if canvas is None:
+        return 1080, 1920, {k: list(v) for k, v in base.items()}, None
+    if not isinstance(canvas, dict):
+        raise ValueError(
+            f"canvas must be a dict, got {type(canvas).__name__}")
+    try:
+        width = int(canvas["width"])
+        height = int(canvas["height"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(
+            "canvas needs integer 'width' and 'height' (px), got "
+            f"{canvas!r}") from None
+    if width <= 0 or height <= 0:
+        raise ValueError(
+            f"canvas width/height must be positive, got {(width, height)}")
+    regions = canvas.get("regions") or {}
+    if not isinstance(regions, dict):
+        raise ValueError(
+            f"canvas['regions'] must be a dict, got {regions!r}")
+    rects = {}
+    for name, default in base.items():
+        raw = regions.get(name, default)
+        try:
+            rect = [float(v) for v in raw]
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"canvas region {name!r} must be [l, b, w, h], got "
+                f"{raw!r}") from None
+        if len(rect) != 4 or not all(0.0 <= v <= 1.0 for v in rect):
+            raise ValueError(
+                f"canvas region {name!r} must be [l, b, w, h] fractions, "
+                f"got {raw!r}")
+        rects[name] = rect
+    if flavor == "quake" and "ranking" not in regions:
+        # Fill the band between the chart top and the map bottom at the
+        # map's x-span (legacy: [0.04, 0.30, 0.92, 0.20]).
+        ml, mb, mw, mh = rects["map"]
+        _cl, cb, _cw, chh = rects["chart"]
+        top = cb + chh
+        rects["ranking"] = [ml, top, mw, max(0.0, mb - top)]
+    info = {
+        "platform": canvas.get("platform"),
+        "width": width,
+        "height": height,
+        "regions": sorted(rects),
+    }
+    return width, height, rects, info
+
+
 def render_viz(
     spec,
     field,
@@ -592,6 +686,7 @@ def render_viz(
     underlay: Optional[bool] = None,
     cmap: Optional[str] = None,
     story_captions: bool = False,
+    canvas=None,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -627,9 +722,20 @@ def render_viz(
     continuous-data main path renders them; the categorical renderers
     record the request as not-applied in the manifest (their colors
     carry meaning, and per-frame scalar stats don't apply).
+
+    ``canvas`` is an optional platform-canvas dict — the shape built by
+    ``survey_layout.to_viz_canvas`` (``{"platform", "width", "height",
+    "regions", "unsafe"}``). It sets the frame size and overrides the
+    title/map/chart/caption/footer region rects so platform chrome
+    (TikTok's status bar, the action rail, the bottom caption zone)
+    never covers content. ``None`` (default) keeps the historical
+    1080x1920 layout, pixel-identical to <= 0.17. Malformed canvases
+    fail fast before any frame renders.
     """
     if layout != "reel-vertical":
         raise ValueError(f"Unknown layout: {layout!r} (only 'reel-vertical' in v0.1.0)")
+    # Fail fast on a bad canvas before any rendering work.
+    _resolve_canvas(canvas)
     style = style or spec.style
     if style not in _STYLE:
         raise ValueError(f"Unknown style: {style!r} (expected one of {sorted(_STYLE)})")
@@ -639,17 +745,20 @@ def render_viz(
     if spec.variable == "storm-tracks":
         return _render_storm_tracks(
             spec, field, series, out_dir, layout, style,
-            want_underlay, cmap=cmap, story_captions=story_captions)
+            want_underlay, cmap=cmap, story_captions=story_captions,
+            canvas=canvas)
 
     if spec.variable == "streamflow":
         return _render_gage_field(
             spec, field, series, out_dir, layout, style,
-            want_underlay, cmap=cmap, story_captions=story_captions)
+            want_underlay, cmap=cmap, story_captions=story_captions,
+            canvas=canvas)
 
     if spec.variable == "earthquakes":
         return _render_quake_field(
             spec, field, series, out_dir, layout, style,
-            want_underlay, cmap=cmap, story_captions=story_captions)
+            want_underlay, cmap=cmap, story_captions=story_captions,
+            canvas=canvas)
 
     plt, mdates, np = _require_plotting()
 
@@ -726,18 +835,20 @@ def render_viz(
     gap_flags: List[bool] = []
     lon_min, lat_min, lon_max, lat_max = spec.bbox
 
+    fig_w, fig_h, rects, canvas_info = _resolve_canvas(canvas)
+
     for n, i in enumerate(frame_idx):
         frame_date = times[i]
         grid = values[i]
 
-        fig = plt.figure(figsize=(10.8, 19.2), dpi=100)
+        fig = plt.figure(figsize=(fig_w / 100, fig_h / 100), dpi=100)
         fig.patch.set_facecolor(st["face"])
 
         # Title block -----------------------------------------------------
-        _draw_title_block(fig, spec, st, region_name)
+        _draw_title_block(fig, spec, st, region_name, rects["title"])
 
         # Map panel --------------------------------------------------------
-        ax_m = fig.add_axes([0.04, 0.36, 0.92, 0.52])
+        ax_m = fig.add_axes(rects["map"])
         ax_m.set_facecolor(st["axes"])
         # Basemap underlay (beneath the variable): GEBCO tint/hillshade
         # shows wherever the variable field is NaN; coastlines draw over
@@ -821,7 +932,7 @@ def render_viz(
                         fontsize=12, colors="white")
 
         # Time-series panel -------------------------------------------------
-        ax_s = fig.add_axes([0.08, 0.08, 0.84, 0.24])
+        ax_s = fig.add_axes(rects["chart"])
         ax_s.set_facecolor(st["axes"])
         ax_s.tick_params(colors=st["muted"], labelsize=14)
         for spine in ax_s.spines.values():
@@ -868,7 +979,7 @@ def render_viz(
                 None,
             )
             if cap is not None:
-                _draw_caption(fig, st, cap["text"])
+                _draw_caption(fig, st, cap["text"], rect=rects["caption"])
 
         # Footer ------------------------------------------------------------
         footer_var = spec.variable
@@ -893,7 +1004,7 @@ def render_viz(
             if n_gaps:
                 footer_var += (f" · {n_gaps} frame{'s' if n_gaps != 1 else ''} "
                                "with no ocean-color observation (cloud)")
-        _draw_footer(fig, spec, st, footer_var)
+        _draw_footer(fig, spec, st, footer_var, rect=rects["footer"])
 
         frame_path = out / f"frame_{n + 1:04d}.png"
         fig.savefig(frame_path, facecolor=fig.get_facecolor())
@@ -914,6 +1025,7 @@ def render_viz(
             "cmap_requested": cmap,
             "cmap_overridden": cmap is not None,
             "story_captions": story_caps,
+            "canvas": canvas_info,
             "vmin": vmin,
             "vmax": vmax,
             "n_frames": len(frames),
@@ -1188,7 +1300,8 @@ def _render_storm_tracks(spec, field, series, out_dir: str,
                          layout: str, style: str,
                          want_underlay: bool,
                          cmap: Optional[str] = None,
-                         story_captions: bool = False
+                         story_captions: bool = False,
+                         canvas=None,
                          ) -> Tuple[List[str], str]:
     """Render IBTrACS storm tracks: cumulative track frames + manifest."""
     plt, mdates, np = _require_plotting()
@@ -1225,13 +1338,15 @@ def _render_storm_tracks(spec, field, series, out_dir: str,
     frames: List[str] = []
     timestamps: List[str] = []
 
+    fig_w, fig_h, rects, canvas_info = _resolve_canvas(canvas)
+
     for n, frame_date in enumerate(frame_dates):
-        fig = plt.figure(figsize=(10.8, 19.2), dpi=100)
+        fig = plt.figure(figsize=(fig_w / 100, fig_h / 100), dpi=100)
         fig.patch.set_facecolor(st["face"])
-        _draw_title_block(fig, spec, st, region_name)
+        _draw_title_block(fig, spec, st, region_name, rects["title"])
 
         # Map panel ------------------------------------------------------
-        ax_m = fig.add_axes([0.04, 0.36, 0.92, 0.52])
+        ax_m = fig.add_axes(rects["map"])
         ax_m.set_facecolor(st["axes"])
         if underlay_rgba is not None:
             ax_m.imshow(underlay_rgba, extent=underlay_extent,
@@ -1335,7 +1450,7 @@ def _render_storm_tracks(spec, field, series, out_dir: str,
                           ec="none", alpha=0.55))
 
         # Time-series panel -------------------------------------------------
-        ax_s = fig.add_axes([0.08, 0.08, 0.84, 0.24])
+        ax_s = fig.add_axes(rects["chart"])
         ax_s.set_facecolor(st["axes"])
         ax_s.tick_params(colors=st["muted"], labelsize=14)
         for spine in ax_s.spines.values():
@@ -1375,7 +1490,7 @@ def _render_storm_tracks(spec, field, series, out_dir: str,
                 footer_var += " + " + " + ".join(f"{o} contours" for o in drawn)
             if missing:
                 footer_var += f" ({', '.join(missing)} context unavailable)"
-        _draw_footer(fig, spec, st, footer_var)
+        _draw_footer(fig, spec, st, footer_var, rect=rects["footer"])
 
         frame_path = out / f"frame_{n + 1:04d}.png"
         fig.savefig(frame_path, facecolor=fig.get_facecolor())
@@ -1405,6 +1520,7 @@ def _render_storm_tracks(spec, field, series, out_dir: str,
             "cmap": "sshs-categorical",
             "cmap_requested": cmap,
             "story_captions": [],
+            "canvas": canvas_info,
             "story_captions_note": (
                 "requested but not applied — categorical variables keep "
                 "fixed scientific encodings"
@@ -1618,7 +1734,8 @@ def _render_gage_field(spec, field, series, out_dir: str,
                        layout: str, style: str,
                        want_underlay: bool,
                        cmap: Optional[str] = None,
-                       story_captions: bool = False
+                       story_captions: bool = False,
+                       canvas=None,
                        ) -> Tuple[List[str], str]:
     """Render USGS streamgage daily values: gage markers + hydrograph.
 
@@ -1686,13 +1803,15 @@ def _render_gage_field(spec, field, series, out_dir: str,
     timestamps: List[str] = []
     empty = not gages
 
+    fig_w, fig_h, rects, canvas_info = _resolve_canvas(canvas)
+
     for n, frame_date in enumerate(frame_dates):
-        fig = plt.figure(figsize=(10.8, 19.2), dpi=100)
+        fig = plt.figure(figsize=(fig_w / 100, fig_h / 100), dpi=100)
         fig.patch.set_facecolor(st["face"])
-        _draw_title_block(fig, spec, st, region_name)
+        _draw_title_block(fig, spec, st, region_name, rects["title"])
 
         # Map panel ------------------------------------------------------
-        ax_m = fig.add_axes([0.04, 0.36, 0.92, 0.52])
+        ax_m = fig.add_axes(rects["map"])
         ax_m.set_facecolor(st["axes"])
         if underlay_rgba is not None:
             ax_m.imshow(underlay_rgba, extent=underlay_extent,
@@ -1795,7 +1914,7 @@ def _render_gage_field(spec, field, series, out_dir: str,
                       alpha=0.55))
 
         # Hydrograph panel -------------------------------------------------
-        ax_s = fig.add_axes([0.08, 0.08, 0.84, 0.24])
+        ax_s = fig.add_axes(rects["chart"])
         ax_s.set_facecolor(st["axes"])
         ax_s.tick_params(colors=st["muted"], labelsize=14)
         for spine in ax_s.spines.values():
@@ -1838,7 +1957,7 @@ def _render_gage_field(spec, field, series, out_dir: str,
                                "unavailable)")
         if empty:
             footer_var += " · no gages in window"
-        _draw_footer(fig, spec, st, footer_var)
+        _draw_footer(fig, spec, st, footer_var, rect=rects["footer"])
 
         frame_path = out / f"frame_{n + 1:04d}.png"
         fig.savefig(frame_path, facecolor=fig.get_facecolor())
@@ -1879,6 +1998,7 @@ def _render_gage_field(spec, field, series, out_dir: str,
             "cmap": "gage-percentile",
             "cmap_requested": cmap,
             "story_captions": [],
+            "canvas": canvas_info,
             "story_captions_note": (
                 "requested but not applied — categorical variables keep "
                 "fixed scientific encodings"
@@ -2097,7 +2217,8 @@ def _render_quake_field(spec, field, series, out_dir: str,
                         layout: str, style: str,
                         want_underlay: bool,
                         cmap: Optional[str] = None,
-                        story_captions: bool = False
+                        story_captions: bool = False,
+                        canvas=None,
                         ) -> Tuple[List[str], str]:
     """Render USGS Earthquake Catalog events: cumulative quake frames.
 
@@ -2149,6 +2270,8 @@ def _render_quake_field(spec, field, series, out_dir: str,
     timestamps: List[str] = []
     empty = not events
 
+    fig_w, fig_h, rects, canvas_info = _resolve_canvas(canvas, flavor="quake")
+
     for n, frame_date in enumerate(frame_dates):
         # Cumulative display: every event with time <= frame date.
         shown = [ev for ev in events if ev["time"].date() <= frame_date]
@@ -2160,12 +2283,12 @@ def _render_quake_field(spec, field, series, out_dir: str,
             [i for i, d in enumerate(count_dates) if d <= frame_date]
             or [0])]
 
-        fig = plt.figure(figsize=(10.8, 19.2), dpi=100)
+        fig = plt.figure(figsize=(fig_w / 100, fig_h / 100), dpi=100)
         fig.patch.set_facecolor(st["face"])
-        _draw_title_block(fig, spec, st, region_name)
+        _draw_title_block(fig, spec, st, region_name, rects["title"])
 
         # Map panel ------------------------------------------------------
-        ax_m = fig.add_axes([0.04, 0.52, 0.92, 0.36])
+        ax_m = fig.add_axes(rects["map"])
         ax_m.set_facecolor(st["axes"])
         if underlay_rgba is not None:
             ax_m.imshow(underlay_rgba, extent=underlay_extent,
@@ -2250,7 +2373,7 @@ def _render_quake_field(spec, field, series, out_dir: str,
                           ec="none", alpha=0.55))
 
         # Largest-events ranking panel ------------------------------------
-        ax_r = fig.add_axes([0.04, 0.30, 0.92, 0.20])
+        ax_r = fig.add_axes(rects["ranking"])
         ax_r.axis("off")
         ax_r.set_facecolor(st["face"])
         ax_r.text(0.0, 0.92, "Largest events", ha="left", va="top",
@@ -2277,7 +2400,7 @@ def _render_quake_field(spec, field, series, out_dir: str,
                       transform=ax_r.transAxes)
 
         # Daily-count time-series panel ------------------------------------
-        ax_s = fig.add_axes([0.08, 0.08, 0.84, 0.18])
+        ax_s = fig.add_axes(rects["chart"])
         ax_s.set_facecolor(st["axes"])
         ax_s.tick_params(colors=st["muted"], labelsize=14)
         for spine in ax_s.spines.values():
@@ -2318,7 +2441,8 @@ def _render_quake_field(spec, field, series, out_dir: str,
                            "observed events — not a forecast")
         # The prescribed footer wording is long; a smaller size keeps it
         # on the 1080 px figure (see _draw_footer's fontsize option).
-        _draw_footer(fig, spec, st, footer_var, fontsize=13)
+        _draw_footer(fig, spec, st, footer_var, fontsize=13,
+                     rect=rects["footer"])
 
         frame_path = out / f"frame_{n + 1:04d}.png"
         fig.savefig(frame_path, facecolor=fig.get_facecolor())
@@ -2370,6 +2494,7 @@ def _render_quake_field(spec, field, series, out_dir: str,
             "empty": empty,
             "catalog_note": _QUAKE_CATALOG_NOTE,
             "comcat": dict(prov),
+            "canvas": canvas_info,
         },
     }
     manifest_path = out / "manifest.json"
