@@ -102,6 +102,29 @@ A future app (web UI, chat bot) can:
 The parser's failure message already documents this upgrade path, so the
 app layer has a contract to build against.
 
+### Refinements and aesthetic copying (v0.16.0)
+
+Two new engine entry points keep the app layer thin:
+
+- `refine_spec(spec, instruction) -> RefineResult` — plain-language
+  edits to an existing spec. `RefineResult.applied` is a list of
+  `SpecChange(field, old, new, reason)` the UI renders verbatim;
+  `RefineResult.unparsed` carries anything not understood (shown, never
+  silently dropped); `RefineResult.cmap` is the requested colormap
+  override for the caller's `render_viz(..., cmap=...)` call — it is
+  deliberately *not* a `VizSpec` field, so the spec schema stays
+  stable. Pure function: no I/O, no network, no global state — safe
+  for threads, batch jobs, and future server endpoints.
+- `suggest_aesthetic(url_or_bytes) -> AestheticProfile` — color-mood
+  analysis of a reference reel URL or uploaded image bytes. The page's
+  `og:image`/`twitter:image` thumbnail is fetched (15 s timeout, 5 MB
+  cap, http(s) only; the video itself is never downloaded) and
+  downsampled to 256 px before analysis, so memory and latency are
+  bounded. `AestheticProfile` is plain data (`to_dict()`-serializable)
+  with `style`, `colormap` (None for near-grayscale), `palette` hex
+  swatches, `brightness`, `dominant_hue`, and `notes` explaining each
+  suggestion. Failures raise `AestheticError` with the honest reason.
+
 ## Schema stability
 
 - `survey-viz.frame-manifest/1.0` is frozen for the 0.1.x line. New fields

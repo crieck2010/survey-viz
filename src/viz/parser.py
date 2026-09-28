@@ -950,6 +950,41 @@ def _derive_title(region_name: str, variable: str, start: _dt.date, end: _dt.dat
     return f"{region_name} \u2014 {label}, {years}"  # em dash
 
 
+def _cadence_for(variable: str, normalized: str, default_time: bool,
+               start: _dt.date, end: _dt.date,
+               today: _dt.date) -> Tuple[_dt.date, _dt.date, str]:
+    """Return ``(start, end, cadence)`` for ``variable``.
+
+    The single home of the cadence rules, shared by
+    :func:`parse_description` and :mod:`viz.refine` so a refinement that
+    switches variables (e.g. SST -> sea ice) recomputes the cadence
+    exactly the way a fresh parse would:
+
+    * bathymetry / elevation are static: yearly cadence, and a single
+      frame (``start == end == today``) when no explicit time phrase
+      was given (v0.9.0 — GEBCO is a static compilation).
+    * water storage is a monthly product (GRACE, v0.11.0).
+    * ocean color is monthly by default; explicit "daily" wording
+      requests the daily L3 product (v0.13.0).
+    * fire, sea ice, night lights, storm tracks, streamflow and
+      earthquakes are daily (v0.6.0 / v0.8.0 / v0.10.0 / v0.12.0 /
+      v0.14.0); everything else is monthly.
+    """
+    if variable in ("bathymetry", "elevation"):
+        cadence = "yearly"
+        if default_time:
+            start = end = today
+    elif variable == "water-storage":
+        cadence = "monthly"
+    elif variable == "ocean-color" and re.search(r"\bdaily\b", normalized.lower()):
+        cadence = "daily"
+    else:
+        cadence = "daily" if variable in ("fire", "sea-ice", "night-lights",
+                                          "storm-tracks", "streamflow",
+                                          "earthquakes") else "monthly"
+    return start, end, cadence
+
+
 def _failure_message(
     text: str,
     region: Optional[dict],
@@ -1043,34 +1078,8 @@ def parse_description(
         default_time = True
 
     spec_title = title or _derive_title(region["name"], variable, start, end)
-    # Sea ice and night lights change fast like fire: one frame per day,
-    # not one representative day per month (v0.6.0 for sea ice; v0.8.0
-    # for night lights — the Black Marble source is daily). Bathymetry
-    # and elevation are static: yearly cadence, and a single frame when
-    # no explicit time phrase was given (v0.9.0 — GEBCO is a static
-    # compilation, not a time series). Storm tracks are fix-level time
-    # series: daily cadence, one frame per day, tracks drawn
-    # cumulatively (v0.10.0). Water storage is a monthly product: GRACE
-    # always renders one frame per month (v0.11.0). Streamflow is a
-    # daily product: USGS daily values render one frame per day
-    # (v0.12.0). Earthquakes are event-level: one cumulative frame per
-    # day (each frame shows all events with time <= that frame date,
-    # v0.14.0). Ocean color is a monthly product by default (the most
-    # cloud-complete composite); explicit "daily" wording requests the
-    # daily L3 product instead (v0.13.0).
-    if variable in ("bathymetry", "elevation"):
-        cadence = "yearly"
-        if default_time:
-            start = end = today
-    elif variable == "water-storage":
-        cadence = "monthly"
-    elif variable == "ocean-color" and re.search(
-            r"\bdaily\b", normalized.lower()):
-        cadence = "daily"
-    else:
-        cadence = "daily" if variable in ("fire", "sea-ice", "night-lights",
-                                          "storm-tracks", "streamflow",
-                                          "earthquakes") else "monthly"
+    start, end, cadence = _cadence_for(
+        variable, normalized, default_time, start, end, today)
     source, source_reason = _parse_source(normalized, variable)
     return VizSpec(
         title=spec_title,

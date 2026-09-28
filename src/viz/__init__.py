@@ -25,8 +25,11 @@ except Exception:  # pragma: no cover - editable/uninstalled checkout
     except PackageNotFoundError:
         __version__ = "0.0.0+unknown"
 
+from .aesthetic import (AestheticError, AestheticProfile, analyze_image,
+                        fetch_image_bytes, suggest_aesthetic)
 from .gazetteer import find_region, get_region, is_fetchable, load_regions
 from .parser import UnparseableDescription, parse_description
+from .refine import RefineResult, SpecChange, refine_spec
 from .render import CURATED_CMAPS, SCHEMA_ID, render_viz
 from .sources import (KNOWN_SOURCES, SOURCE_LABELS, default_source,
                       explain_source, fetch_for_source,
@@ -40,6 +43,14 @@ __all__ = [
     "VizSpec",
     "UnparseableDescription",
     "parse_description",
+    "refine_spec",
+    "RefineResult",
+    "SpecChange",
+    "AestheticError",
+    "AestheticProfile",
+    "analyze_image",
+    "fetch_image_bytes",
+    "suggest_aesthetic",
     "render_viz",
     "find_region",
     "get_region",

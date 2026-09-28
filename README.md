@@ -62,6 +62,42 @@ print(spec.context) # () — plain ocean-color requests have no context
 frames, manifest = render_viz(spec, field, series, out_dir="frames")
 ```
 
+### Refining a spec in plain language
+
+```python
+from viz import refine_spec
+
+result = refine_spec(spec, "zoom in on the Gulf of Mexico and use a warmer colormap")
+for change in result.applied:
+    print(f"{change.field}: {change.old} -> {change.new}  ({change.reason})")
+# region_key: puget-sound -> gulf-of-mexico  (instruction refocused on 'Gulf of Mexico')
+# bbox: (...) -> (...)                        (instruction refocused on 'Gulf of Mexico')
+# colormap: (previous setting) -> inferno    (instruction requested the 'inferno' colormap)
+# title: ... -> Gulf of Mexico — ...         (title was automatic, so it followed ...)
+print(result.unparsed)  # [] — anything not understood lands here, never silently ignored
+new_spec = result.spec  # input spec is never mutated
+```
+
+### Copying a reference reel's color mood
+
+```python
+from viz import suggest_aesthetic
+
+profile = suggest_aesthetic("https://www.instagram.com/reel/XXXXXXXX/")
+print(profile.style)     # "reel-dark"
+print(profile.colormap)  # "inferno" (None for near-grayscale thumbnails)
+print(profile.palette)   # ["#1a0f0a", ...] — dominant colors, for the UI to show
+print(profile.notes)     # what was measured and why
+```
+
+This copies the *color mood only* (brightness → dark/light style,
+dominant hue → curated colormap). The video itself is never
+downloaded — social platforms keep it behind login walls — so the
+page's `og:image` thumbnail is analyzed instead. Fonts, layouts, and
+transitions are not recoverable from a thumbnail and are not
+attempted. Uploads work too: `suggest_aesthetic(image_bytes)`.
+
+
 ## Parser rules (summary)
 
 - **Region**: gazetteer display names/aliases, case-insensitive, longest match wins.

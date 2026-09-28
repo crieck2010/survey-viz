@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-09-27
+
+### Added
+- `viz.refine_spec(spec, instruction)`: plain-language refinements to
+  an existing `VizSpec` ("zoom in on the Gulf of Mexico and use a
+  warmer colormap"). Only the fields the instruction mentions change;
+  everything else is preserved. Returns a `RefineResult` with the new
+  spec, the requested colormap (a render-time argument, not a spec
+  field), every applied change (old → new + reason), and notes for
+  anything not understood — never silently guessed. Automatic titles
+  follow region/variable/time changes; customized titles are never
+  touched unless the instruction mentions the title. Raises
+  `UnparseableDescription` when nothing matches, listing the supported
+  refinement vocabulary. Pure function: no I/O, no network, no global
+  state.
+- `viz.suggest_aesthetic(url_or_bytes)`: copy the *color mood* of a
+  reference reel URL or screenshot. Fetches the page's `og:image` /
+  `twitter:image` thumbnail (the video itself is deliberately out of
+  scope — it sits behind login walls), measures mean brightness and
+  dominant hue, and suggests the `reel-dark` / `light` style plus a
+  curated colormap, with the measured palette and explanatory notes.
+  Near-grayscale thumbnails suggest no colormap (the variable default
+  is kept, not guessed). 15 s timeout, 5 MB cap, http(s) only;
+  analysis downsamples to 256 px. Raises `AestheticError` with the
+  honest reason on any failure. Also exported: `analyze_image`,
+  `fetch_image_bytes`, `AestheticProfile`, `AestheticError`.
+
+### Changed
+- `parser._cadence_for(...)`: the cadence rules extracted into one
+  shared helper used by both `parse_description` and `viz.refine`, so
+  a refinement that switches variables recomputes the cadence exactly
+  like a fresh parse. Behavior unchanged (parser suite green).
+
 ## [0.15.0] - 2026-09-27
 
 ### Added
