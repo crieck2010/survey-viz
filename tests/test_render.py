@@ -234,3 +234,34 @@ def test_render_current_field_speed_values():
     assert values.shape == (1, 1, 2)
     assert values[0, 0, 0] == pytest.approx(5.0)
     assert np.isnan(values[0, 0, 1])  # masked v -> NaN speed
+
+
+def test_render_anomaly_variable(tmp_path):
+    # Derived anomaly product: symmetric spec limits are honored, the
+    # baseline note lands in the manifest, and field-carried units
+    # (standardized "σ") win over the base variable's registry unit.
+    field, series = _field()
+    field["units"] = "σ"
+    spec = _spec(variable="sst-anomaly", vmin=-3.0, vmax=3.0,
+                 derived_note="anomaly vs 1991–2020 climatology")
+    frames, manifest_path = render_viz(spec, field, series,
+                                       out_dir=tmp_path / "frames",
+                                       story_captions=True)
+    assert len(frames) == 3
+    manifest = json.loads(Path(manifest_path).read_text())
+    assert manifest["render"]["vmin"] == -3.0
+    assert manifest["render"]["vmax"] == 3.0
+    assert manifest["render"]["derived"] == {
+        "variable": "sst-anomaly",
+        "note": "anomaly vs 1991–2020 climatology",
+    }
+    assert manifest["spec"]["derived_note"] == "anomaly vs 1991–2020 climatology"
+    caps = manifest["render"]["story_captions"]
+    assert all("anomaly" in c["text"] for c in caps)
+
+
+def test_spec_derived_note_round_trip():
+    spec = _spec(derived_note="anomaly vs 1991–2020 climatology")
+    assert VizSpec.from_dict(spec.to_dict()).derived_note == \
+        "anomaly vs 1991–2020 climatology"
+    assert VizSpec.from_dict(_spec().to_dict()).derived_note is None

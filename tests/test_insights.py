@@ -137,3 +137,26 @@ def test_render_viz_story_captions_manifest(tmp_path):
     assert isinstance(caps, list) and len(caps) >= 1
     assert all({"frame_start", "frame_end", "text"} <= set(c.keys())
                for c in caps)
+
+
+def test_anomaly_variable_resolves_to_base():
+    stats = frame_stats(_values([1.0, 3.0, 2.0]), [0, 1, 2], _dates(3))
+    caps = suggest_captions(stats, "sst-anomaly", "°C")
+    peak = [c for c in caps if c.text.startswith("Peak")]
+    assert len(peak) == 1
+    assert "sea surface temperature anomaly" in peak[0].text
+    assert "3.0°C" in peak[0].text
+
+
+def test_anomaly_trend_uses_base_words():
+    means = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
+    stats = frame_stats(_values(means), list(range(6)), _dates(6))
+    caps = suggest_captions(stats, "sst-anomaly", "°C")
+    trend = [c for c in caps if "trend" in c.text]
+    assert len(trend) == 1
+    assert trend[0].text.startswith("Warming trend: +")
+
+
+def test_anomaly_unknown_base_still_empty():
+    stats = frame_stats(_values([1.0, 3.0, 2.0]), [0, 1, 2], _dates(3))
+    assert suggest_captions(stats, "nonsense-anomaly", "x") == []

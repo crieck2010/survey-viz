@@ -22,6 +22,11 @@ Honesty rules (deliberate limits, not bugs):
   end is the trend's endpoint, not a story event;
 * all-NaN frames (gap months) never carry captions;
 * at most one trend + one peak caption, never overlapping (peak wins).
+
+Derived anomaly products (``"<base>-anomaly"``, survey-derive v0.1.0+)
+resolve to their base variable: the caption names the anomaly
+explicitly (``"Peak sea surface temperature anomaly: …"``) so an
+anomaly is never captioned as the raw variable.
 """
 
 from __future__ import annotations
@@ -65,6 +70,23 @@ _TREND_WORDS = {
     "night-lights": ("Brightening", "Dimming"),
     "water-storage": ("Wetting", "Drying"),
 }
+
+#: Suffix marking a derived anomaly product (survey-derive v0.1.0+).
+#: A variable like ``"sst-anomaly"`` resolves to its base variable
+#: (``"sst"``) for caption support checks, labels, and trend words —
+#: the caption then reads e.g. ``"Peak sea surface temperature
+#: anomaly: +2.1°C regional mean (Aug 2024)"`` instead of silently
+#: dropping the caption or, worse, labeling an anomaly as the raw
+#: variable.
+_DERIVED_SUFFIX = "-anomaly"
+
+
+def _resolve_variable(variable: str) -> tuple:
+    """Split a possibly-derived variable into ``(base, is_anomaly)``."""
+    if variable.endswith(_DERIVED_SUFFIX) and len(variable) > len(_DERIVED_SUFFIX):
+        return variable[: -len(_DERIVED_SUFFIX)], True
+    return variable, False
+
 
 #: Minimum trend size, as a fraction of the frames' mean range.
 _TREND_FRACTION = 0.05
@@ -146,13 +168,16 @@ def suggest_captions(stats: Sequence[FrameStat],
     honesty thresholds.
     """
     import numpy as np
-    if variable not in SUPPORTED_VARIABLES:
+    base_variable, is_anomaly = _resolve_variable(variable)
+    if base_variable not in SUPPORTED_VARIABLES:
         return []
     data = [(i, s) for i, s in enumerate(stats) if s.finite > 0]
     if len(data) < 3:
         return []
     means = np.array([s.mean for _, s in data])
-    label = _VARIABLE_LABELS.get(variable, variable.replace("-", " "))
+    label = _VARIABLE_LABELS.get(base_variable, base_variable.replace("-", " "))
+    if is_anomaly:
+        label = f"{label} anomaly"
 
     captions: List[Caption] = []
 
@@ -190,7 +215,7 @@ def suggest_captions(stats: Sequence[FrameStat],
         se = np.sqrt(ss_res / (n - 2)) / np.sqrt(denom) if denom > 0 else 0.0
         significant = se == 0.0 or abs(slope) / se > 2.0
     if significant:
-        up_word, down_word = _TREND_WORDS.get(variable,
+        up_word, down_word = _TREND_WORDS.get(base_variable,
                                               ("Rising", "Falling"))
         word = up_word if total > 0 else down_word
         sign = "+" if total > 0 else ""

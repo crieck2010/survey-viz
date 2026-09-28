@@ -251,6 +251,23 @@ def _coerce_date(value: Any) -> _dt.date:
 _GRID_ATTRS = ("values", "data", "sst", "grids", "grid")
 _GRID_METHODS = ("grid", "frame", "at", "get_frame")
 
+#: Suffix marking a derived anomaly product (survey-derive v0.1.0+).
+_DERIVED_SUFFIX = "-anomaly"
+
+
+def _derived_base(variable: str) -> str:
+    """Base variable for a possibly-derived ``"<base>-anomaly"`` name."""
+    if variable.endswith(_DERIVED_SUFFIX) and len(variable) > len(_DERIVED_SUFFIX):
+        return variable[: -len(_DERIVED_SUFFIX)]
+    return variable
+
+
+def _field_units(field: Any) -> str:
+    """Display units carried by the field dict/object itself."""
+    if isinstance(field, dict):
+        return str(field.get("units") or "")
+    return str(getattr(field, "units", "") or "")
+
 
 def _normalize_field(field: Any) -> Tuple[List[_dt.date], Any, Any, Any]:
     """Return (times, lats, lons, values[T,H,W]) as numpy arrays."""
@@ -810,9 +827,23 @@ def render_viz(
         norm = None
 
     st = _STYLE[style]
+    # Derived anomaly products (survey-derive): resolve the base
+    # variable for registry lookups. Dispatch above already routed
+    # the exact categorical names, so "-anomaly" names always land
+    # here on the continuous path — and never in the ocean-color
+    # LogNorm branch (signed anomalies must never be log-scaled).
+    base_variable = _derived_base(spec.variable)
+    is_derived = base_variable != spec.variable
     var_cmap = _validate_cmap(cmap, plt) or _VARIABLE_CMAPS.get(
-        spec.variable, st["cmap"])
-    unit = _VARIABLE_UNITS.get(spec.variable, "")
+        base_variable, st["cmap"])
+    if is_derived:
+        # The derive engine sets the field's own units ("°C" for
+        # anomalies, "σ" for standardized, "%" for percent-of-normal);
+        # the registry only knows the base variable's unit, which
+        # would mislabel standardized anomalies.
+        unit = _field_units(field) or _VARIABLE_UNITS.get(base_variable, "")
+    else:
+        unit = _VARIABLE_UNITS.get(spec.variable, "")
     region = get_region(spec.region_key)
     region_name = region["name"] if region else spec.region_key
 
@@ -982,7 +1013,7 @@ def render_viz(
                 _draw_caption(fig, st, cap["text"], rect=rects["caption"])
 
         # Footer ------------------------------------------------------------
-        footer_var = spec.variable
+        footer_var = base_variable if is_derived else spec.variable
         ov = list(getattr(spec, "overlays", ()))
         if ov:
             footer_var += " + " + " + ".join(f"{o} contours" for o in ov)
@@ -1004,6 +1035,10 @@ def render_viz(
             if n_gaps:
                 footer_var += (f" · {n_gaps} frame{'s' if n_gaps != 1 else ''} "
                                "with no ocean-color observation (cloud)")
+        if is_derived and getattr(spec, "derived_note", None):
+            # The anomaly baseline is part of the data's identity:
+            # "+2°C" is meaningless without "vs 1991–2020".
+            footer_var += f" · {spec.derived_note}"
         _draw_footer(fig, spec, st, footer_var, rect=rects["footer"])
 
         frame_path = out / f"frame_{n + 1:04d}.png"
@@ -1039,6 +1074,12 @@ def render_viz(
                 "2004–2009 time-mean removed (CSR RL06.3 "
                 "time_mean_removed 2004.000–2009.999)"
                 if spec.variable == "water-storage" else None),
+            # Derived-product provenance (survey-derive): which
+            # anomaly family was rendered and against what baseline.
+            "derived": (
+                {"variable": spec.variable,
+                 "note": getattr(spec, "derived_note", None)}
+                if is_derived else None),
             "gap_months": [ts for ts, gap in zip(timestamps, gap_flags)
                            if gap] or None,
             # Ocean-color provenance: the log scale is part of the

@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-09-28
+
+### Added
+- Derived-product support for climatological anomaly maps
+  (**survey-derive** v0.1.0+): variables named `"<base>-anomaly"`
+  (e.g. `"sst-anomaly"`) render on the continuous path with
+  anomaly-aware behavior —
+  - `viz.insights.suggest_captions()` resolves the base variable for
+    the support check, labels, and trend words, so captions read
+    `"Peak sea surface temperature anomaly: …"` instead of silently
+    dropping or mislabeling anomalies;
+  - colormap registry lookups use the base variable;
+  - the colorbar label prefers the field's own `"units"`
+    (`"°C"` for anomalies, `"σ"` for standardized anomalies, `"%"`
+    for percent-of-normal) over the base variable's registered unit;
+  - new `VizSpec.derived_note` (e.g.
+    `"anomaly vs 1991–2020 climatology"`) is appended to the frame
+    footer and recorded in the manifest under `render.derived`, so
+    the baseline an anomaly is computed against is part of the image
+    itself — never metadata-only.
+  - Anomaly variables never take the ocean-color `LogNorm` branch
+    (signed anomalies must never be log-scaled). `spec.vmin`/`vmax`
+    (existing) carry the shared symmetric color scale, so anomaly
+    frames never autoscale per frame.
+  - `VizSpec.from_dict()` loads dicts without `"derived_note"`
+    (pre-v0.19.0) with `None`.
+
 ## [0.18.0] - 2026-09-28
 
 ### Added

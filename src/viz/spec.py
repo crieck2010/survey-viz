@@ -196,6 +196,11 @@ class VizSpec:
     storm_rank: str = ""
     storm_top_n: Optional[int] = None
     caption: Optional[str] = None
+    #: Viewer-facing provenance for derived products (survey-derive
+    #: v0.1.0+), e.g. ``"anomaly vs 1991–2020 climatology"``. Appended
+    #: to the frame footer so the baseline an anomaly is computed
+    #: against is part of the image itself — never metadata-only.
+    derived_note: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not self.title.strip():
@@ -315,6 +320,7 @@ class VizSpec:
             "storm_rank": self.storm_rank,
             "storm_top_n": self.storm_top_n,
             "caption": self.caption,
+            "derived_note": self.derived_note,
         }
 
     @classmethod
@@ -329,7 +335,8 @@ class VizSpec:
         ``None``; dicts without ``"context"`` (pre-v0.13.0) load with
         ``()``; ``"variable": "chlorophyll"`` (pre-v0.13.0) loads as
         the canonical ``"ocean-color"``; dicts without ``"caption"``
-        (pre-v0.15.0) load with ``None`` (default footer).
+        (pre-v0.15.0) load with ``None`` (default footer); dicts without
+        ``"derived_note"`` (pre-v0.19.0) load with ``None``.
         """
         if not isinstance(data, dict):
             raise TypeError(f"VizSpec.from_dict: expected dict, got {type(data).__name__}")
