@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-09-28
+
+### Added
+- `viz.insights`: data-driven story captions (stdlib + numpy, no
+  matplotlib). `frame_stats()` reduces each rendered frame's grid to
+  headline scalars (mean/max/min, finite-pixel count); `suggest_captions()`
+  derives deterministic caption events — a peak caption ("Peak sea
+  surface temperature: 28.4°C regional mean (Aug 2024)") and a trend
+  caption ("Warming trend: +5.0°C across the reel"). Honesty rules:
+  captions describe only the rendered region/time window (never global
+  records); peak captions say "regional mean"; the peak is skipped when
+  the data are flat or the peak is the last frame; a trend needs both a
+  >= 5% effect size and a statistically significant slope (|t| > 2);
+  all-NaN gap frames never carry captions; at most one peak + one trend,
+  never overlapping (peak wins); categorical products (storm tracks,
+  streamgages, earthquakes) keep their fixed scientific encodings and
+  get no auto-captions. Exported as `Caption`, `frame_stats`,
+  `suggest_captions` from the package root.
+- `render_viz(..., story_captions=True)`: burns the caption events in as
+  lower-third chips on the covered frames and records them in the
+  manifest under `render.story_captions`. Categorical renderers accept
+  the flag and record it as not-applied (fixed encodings preserved).
+- `refine_spec()` camera-motion intents: plain-language instructions
+  like "add a slow zoom in", "pan left during the video", "no camera
+  motion", or "make the transitions smoother" are parsed into a partial
+  motion-settings dict on `RefineResult.motion` (zoom in/out/off +
+  speed, 8 pan directions + speed, smoothing on/off + step count) for
+  the caller to merge into its encode-time motion settings — camera
+  motion stays out of `VizSpec`, matching the render-time colormap
+  model. A bare "zoom in" with no camera context keeps its v0.16.0
+  geographic meaning (bbox halved); motion words that collide with
+  variable keywords ("burns" → fire, "drift" → currents) are neutralized
+  after motion detection so a camera instruction never hijacks the
+  variable.
+
 ## [0.16.0] - 2026-09-27
 
 ### Added

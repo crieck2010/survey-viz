@@ -440,6 +440,28 @@ def _draw_title_block(fig, spec, st, region_name: str) -> None:
     )
 
 
+def _draw_caption(fig, st, text: str, fontsize: int = 22) -> None:
+    """Lower-third story caption, drawn above the footer strip.
+
+    A rounded, semi-transparent chip centered on the figure — visible
+    over any map without obscuring the data panel.
+    """
+    ax_c = fig.add_axes([0.0, 0.065, 1.0, 0.075])
+    ax_c.axis("off")
+    ax_c.set_facecolor(st["face"])
+    ax_c.text(
+        0.5,
+        0.5,
+        text,
+        ha="center",
+        va="center",
+        fontsize=fontsize,
+        color=st["text"],
+        bbox=dict(boxstyle="round,pad=0.45", facecolor=st["axes"],
+                  edgecolor="none", alpha=0.88),
+    )
+
+
 def _draw_footer(fig, spec, st, footer_var: str, fontsize: int = 16) -> None:
     """Shared footer (map frames and storm-track frames).
 
@@ -569,6 +591,7 @@ def render_viz(
     style: Optional[str] = None,
     underlay: Optional[bool] = None,
     cmap: Optional[str] = None,
+    story_captions: bool = False,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -596,6 +619,14 @@ def render_viz(
     validated (typos still fail fast) but recorded in the manifest as
     requested-not-applied, never silently recoloring data whose colors
     carry meaning. ``None`` (default) keeps each variable's default.
+
+    ``story_captions`` burns data-driven headline captions into the
+    frames (see :mod:`viz.insights`): a peak caption on the
+    highest-mean frame and, when the trend reaches 5% of the frames'
+    mean range, a trend caption on the closing frames. Only the
+    continuous-data main path renders them; the categorical renderers
+    record the request as not-applied in the manifest (their colors
+    carry meaning, and per-frame scalar stats don't apply).
     """
     if layout != "reel-vertical":
         raise ValueError(f"Unknown layout: {layout!r} (only 'reel-vertical' in v0.1.0)")
@@ -608,17 +639,17 @@ def render_viz(
     if spec.variable == "storm-tracks":
         return _render_storm_tracks(
             spec, field, series, out_dir, layout, style,
-            want_underlay, cmap=cmap)
+            want_underlay, cmap=cmap, story_captions=story_captions)
 
     if spec.variable == "streamflow":
         return _render_gage_field(
             spec, field, series, out_dir, layout, style,
-            want_underlay, cmap=cmap)
+            want_underlay, cmap=cmap, story_captions=story_captions)
 
     if spec.variable == "earthquakes":
         return _render_quake_field(
             spec, field, series, out_dir, layout, style,
-            want_underlay, cmap=cmap)
+            want_underlay, cmap=cmap, story_captions=story_captions)
 
     plt, mdates, np = _require_plotting()
 
@@ -678,6 +709,17 @@ def render_viz(
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+
+    # Data-driven story captions (main continuous path only): computed
+    # once from the full field, then burned per-frame in the loop.
+    story_caps: List[Dict[str, Any]] = []
+    if story_captions:
+        from .insights import frame_stats, suggest_captions
+        _stats = frame_stats(values, frame_idx, times)
+        story_caps = [
+            c.to_dict()
+            for c in suggest_captions(_stats, spec.variable, unit)
+        ]
 
     frames: List[str] = []
     timestamps: List[str] = []
@@ -818,6 +860,16 @@ def render_viz(
             ax_s.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
             ax_s.set_ylabel(unit, color=st["muted"], fontsize=16)
 
+        # Story caption (data-driven headline, when requested) ------------
+        if story_caps and not is_gap_frame:
+            cap = next(
+                (c for c in story_caps
+                 if c["frame_start"] <= n <= c["frame_end"]),
+                None,
+            )
+            if cap is not None:
+                _draw_caption(fig, st, cap["text"])
+
         # Footer ------------------------------------------------------------
         footer_var = spec.variable
         ov = list(getattr(spec, "overlays", ()))
@@ -861,6 +913,7 @@ def render_viz(
             "cmap": var_cmap,
             "cmap_requested": cmap,
             "cmap_overridden": cmap is not None,
+            "story_captions": story_caps,
             "vmin": vmin,
             "vmax": vmax,
             "n_frames": len(frames),
@@ -1134,7 +1187,9 @@ def _storm_runs(track: Dict[str, Any], cutoff: _dt.date) -> List[Tuple[str, list
 def _render_storm_tracks(spec, field, series, out_dir: str,
                          layout: str, style: str,
                          want_underlay: bool,
-                         cmap: Optional[str] = None) -> Tuple[List[str], str]:
+                         cmap: Optional[str] = None,
+                         story_captions: bool = False
+                         ) -> Tuple[List[str], str]:
     """Render IBTrACS storm tracks: cumulative track frames + manifest."""
     plt, mdates, np = _require_plotting()
     # Categorical Saffir-Simpson encoding: a user cmap is validated
@@ -1349,6 +1404,11 @@ def _render_storm_tracks(spec, field, series, out_dir: str,
             "style": style,
             "cmap": "sshs-categorical",
             "cmap_requested": cmap,
+            "story_captions": [],
+            "story_captions_note": (
+                "requested but not applied — categorical variables keep "
+                "fixed scientific encodings"
+                if story_captions else None),
             "vmin": wind_range[0],
             "vmax": wind_range[1],
             "n_frames": len(frames),
@@ -1557,7 +1617,9 @@ def _draw_tp_overlay(ax_m, ov, frame_date) -> bool:
 def _render_gage_field(spec, field, series, out_dir: str,
                        layout: str, style: str,
                        want_underlay: bool,
-                       cmap: Optional[str] = None) -> Tuple[List[str], str]:
+                       cmap: Optional[str] = None,
+                       story_captions: bool = False
+                       ) -> Tuple[List[str], str]:
     """Render USGS streamgage daily values: gage markers + hydrograph.
 
     Map panel: one marker per gage at its (lon, lat), colored by the
@@ -1816,6 +1878,11 @@ def _render_gage_field(spec, field, series, out_dir: str,
             "style": style,
             "cmap": "gage-percentile",
             "cmap_requested": cmap,
+            "story_captions": [],
+            "story_captions_note": (
+                "requested but not applied — categorical variables keep "
+                "fixed scientific encodings"
+                if story_captions else None),
             "vmin": None,
             "vmax": None,
             "n_frames": len(frames),
@@ -2029,7 +2096,9 @@ def _quake_largest(events: List[Dict[str, Any]], n: int = 5
 def _render_quake_field(spec, field, series, out_dir: str,
                         layout: str, style: str,
                         want_underlay: bool,
-                        cmap: Optional[str] = None) -> Tuple[List[str], str]:
+                        cmap: Optional[str] = None,
+                        story_captions: bool = False
+                        ) -> Tuple[List[str], str]:
     """Render USGS Earthquake Catalog events: cumulative quake frames.
 
     Map panel: one marker per event at its (lon, lat), marker area per
@@ -2280,6 +2349,11 @@ def _render_quake_field(spec, field, series, out_dir: str,
             "style": style,
             "cmap": "quake-magnitude",
             "cmap_requested": cmap,
+            "story_captions": [],
+            "story_captions_note": (
+                "requested but not applied — categorical variables keep "
+                "fixed scientific encodings"
+                if story_captions else None),
             "vmin": None,
             "vmax": None,
             "n_frames": len(frames),

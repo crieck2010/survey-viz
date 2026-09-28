@@ -125,6 +125,22 @@ Two new engine entry points keep the app layer thin:
   swatches, `brightness`, `dominant_hue`, and `notes` explaining each
   suggestion. Failures raise `AestheticError` with the honest reason.
 
+### Motion refinements and story captions (v0.17.0)
+
+- `RefineResult.motion` — camera-motion intents parsed from the same
+  plain-language instruction ("add a slow zoom in", "pan left during
+  the video", "no camera motion"). A partial dict
+  (`zoom`/`zoom_speed`, `pan`/`pan_speed`, `smooth`/`smooth_steps`) the
+  caller merges over its encode-time motion settings (survey-animate's
+  `MotionSpec`); never a `VizSpec` field. Thread-safe and pure like the
+  rest of `refine_spec`.
+- `render_viz(..., story_captions=True)` — data-driven caption events
+  from `viz.insights` (stdlib + numpy only), burned in as lower-third
+  chips and recorded at `manifest["render"]["story_captions"]`.
+  Categorical renderers accept the flag and record it as not-applied.
+  Scales with frame count (one pass over the grids); caption
+  computation is O(frames) scalars after the render loop.
+
 ## Schema stability
 
 - `survey-viz.frame-manifest/1.0` is frozen for the 0.1.x line. New fields

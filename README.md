@@ -76,7 +76,43 @@ for change in result.applied:
 # title: ... -> Gulf of Mexico — ...         (title was automatic, so it followed ...)
 print(result.unparsed)  # [] — anything not understood lands here, never silently ignored
 new_spec = result.spec  # input spec is never mutated
+
+# Camera-motion intents ride along on the result (not the spec):
+result = refine_spec(spec, "add a slow zoom in during the video")
+print(result.motion)  # {"zoom": "in", "zoom_speed": 0.15} — merge into
+                      # the caller's encode-time motion settings
 ```
+
+`RefineResult.motion` is a partial dict of encode-time settings —
+`zoom` (`in`/`out`/`off`), `zoom_speed` (0–1), `pan` (8 compass
+directions / `off`), `pan_speed` (0–1), `smooth` (bool), `smooth_steps`
+(int) — for the caller (e.g. survey-animate's `MotionSpec`) to merge
+over its current settings. Camera motion is deliberately *not* a
+`VizSpec` field: it describes the encode, not the map. A bare "zoom in"
+with no camera context keeps its geographic meaning (bbox halved).
+
+### Data-driven story captions
+
+```python
+from viz import render_viz
+
+frames, manifest = render_viz(spec, field, out_dir="frames",
+                              story_captions=True)
+print(manifest["render"]["story_captions"])
+# [{"frame_start": 3, "frame_end": 5,
+#   "text": "Peak sea surface temperature: 28.4°C regional mean (Aug 2024)"},
+#  {"frame_start": 33, "frame_end": 35,
+#   "text": "Warming trend: +5.0°C across the reel"}]
+```
+
+`viz.insights` computes headline statistics from the rendered field
+and turns them into timed caption events, burned in as lower-third
+chips. Captions describe only the rendered region and time window —
+never global records. Peak captions say "regional mean"; a trend needs
+both a ≥ 5% effect size and a significant slope (|t| > 2). Flat data,
+all-NaN gap frames, and categorical products (storm tracks,
+streamgages, earthquakes) get no auto-captions — the fixed scientific
+encodings are never overwritten.
 
 ### Copying a reference reel's color mood
 

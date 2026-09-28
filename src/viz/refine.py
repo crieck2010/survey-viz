@@ -85,6 +85,8 @@ SUPPORTED_REFINEMENTS = (
     "style: dark mode / light mode",
     "basemap: turn off the basemap / turn on the basemap",
     "region: zoom in on <place> / focus on <place> / zoom in / zoom out",
+    "motion: add a slow zoom-in effect / pan left during the video / "
+    "ken burns drift / no camera motion",
     "time: 2015 to 2020 / last 5 years / last summer / ...",
     "variable: show sea ice instead / switch to precipitation",
     "source: use the MUR product",
@@ -130,6 +132,56 @@ _REGION_VERBS = re.compile(
 _ZOOM_IN_BARE = re.compile(r"\bzoom\s+in\b")
 _ZOOM_OUT_BARE = re.compile(r"\bzoom\s+out\b")
 
+# --- camera-motion intents (encode-time; carried on the result, not the spec)
+# Bare "zoom in/out" stays geographic (bbox scaling) for backward
+# compatibility. Motion intents only parse when a camera-motion context
+# word is present ("add a slow zoom-in effect", "pan left during the
+# video", "ken burns drift").
+_MOTION_CONTEXT = re.compile(
+    r"\b(ken\s*burns|cinematic|camera|drift|effect|during\s+the\s+(video|reel|clip)|"
+    r"over\s+the\s+(video|reel|clip)|while\s+it\s+plays|as\s+it\s+plays)\b")
+_MOTION_ZOOM = re.compile(r"\bzoom\s+(in|out)\b")
+_MOTION_ZOOM_OFF = re.compile(
+    r"\b(?:turn\s+off|stop|disable|remove|no)\s+(?:the\s+)?zoom(?:\s+effect)?\b")
+# NOTE: compound directions come first in the alternation — otherwise
+# "south" would match inside "south-west" and the "-west" would be lost.
+_MOTION_PAN = re.compile(
+    r"\b(?:pan|drift)\s+(?:to\s+(?:the\s+)?)?"
+    r"(north[\s-]?east|north[\s-]?west|south[\s-]?east|south[\s-]?west|"
+    r"up[\s-]?left|up[\s-]?right|down[\s-]?left|down[\s-]?right|"
+    r"up|down|left|right|north|south|east|west)\b")
+_MOTION_PAN_OFF = re.compile(
+    r"\b(?:turn\s+off|stop|disable|no)\s+pan(?:ning)?\b")
+_MOTION_OFF = re.compile(
+    r"\b(?:no|static|turn\s+off|disable)\s+(?:camera\s+)?motion\b|"
+    r"\bstatic\s+camera\b")
+_MOTION_SMOOTH_OFF = re.compile(r"\b(?:no|turn\s+off|disable)\s+smooth\w*\b")
+_MOTION_SMOOTH_ON = re.compile(r"\b(smooth\w*|cross[\s-]?fade|blend\w*)\b")
+_MOTION_VERY_FAST = re.compile(r"\b(very\s+fast|dramatic(?:ally)?|rapid(?:ly)?)\b")
+_MOTION_FAST = re.compile(r"\b(fast|quick(?:ly)?|faster|speed\s+up)\b")
+_MOTION_SLOWER = re.compile(r"\b(slower|slow\s+down)\b")
+_MOTION_SLOW = re.compile(r"\b(slow(?:ly)?|gentle|gently|gradual(?:ly)?)\b")
+
+#: Normalized pan directions (compass + image coords collapse here).
+_DIR_NORM = {
+    "up": "up", "north": "up",
+    "down": "down", "south": "down",
+    "left": "left", "west": "left",
+    "right": "right", "east": "right",
+    "upleft": "up-left", "northwest": "up-left",
+    "upright": "up-right", "northeast": "up-right",
+    "downleft": "down-left", "southwest": "down-left",
+    "downright": "down-right", "southeast": "down-right",
+}
+
+#: Absolute speed presets (documented — refine_spec has no access to
+#: the caller's current motion state, so relative words map to fixed
+#: values the UI can show and the user can re-adjust).
+_MOTION_SPEED_PRESETS = {
+    "very_fast": 1.0, "fast": 0.75, "slower": 0.25, "slow": 0.15,
+    "default": 0.35,
+}
+
 
 @dataclass
 class SpecChange:
@@ -150,12 +202,20 @@ class RefineResult:
         cmap: requested colormap override (``None`` = the instruction
             did not mention one — pass through whatever the caller
             was already using).
+        motion: partial camera-motion update (``None`` = the instruction
+            did not mention camera motion). A dict with any subset of
+            the ``MotionSpec`` fields (``zoom``, ``zoom_speed``, ``pan``,
+            ``pan_speed``, ``smooth``, ``smooth_steps``); the caller
+            merges it over its current motion settings. Speed words map
+            to absolute presets (1.0 / 0.75 / 0.25 / 0.15, default 0.35)
+            — see :mod:`viz.refine` docs.
         applied: the changes made, in instruction order.
         unparsed: notes about parts of the instruction that could not
             be understood or applied (never silently ignored).
     """
     spec: VizSpec
     cmap: Optional[str]
+    motion: Optional[Dict[str, Any]] = None
     applied: List[SpecChange] = field(default_factory=list)
     unparsed: List[str] = field(default_factory=list)
 
@@ -264,12 +324,93 @@ def _zoom_bbox(bbox: Tuple[float, float, float, float],
             min(180.0, clon + dlon), min(90.0, clat + dlat))
 
 
+def _motion_speed(scan_lower: str) -> Optional[float]:
+    """Map speed words to the absolute presets (None = not mentioned)."""
+    if _MOTION_VERY_FAST.search(scan_lower):
+        return _MOTION_SPEED_PRESETS["very_fast"]
+    if _MOTION_FAST.search(scan_lower):
+        return _MOTION_SPEED_PRESETS["fast"]
+    if _MOTION_SLOWER.search(scan_lower):
+        return _MOTION_SPEED_PRESETS["slower"]
+    if _MOTION_SLOW.search(scan_lower):
+        return _MOTION_SPEED_PRESETS["slow"]
+    return None
+
+
+def _detect_motion(scan_lower: str
+                   ) -> Tuple[Dict[str, Any], bool, List[str], bool]:
+    """Parse camera-motion intents.
+
+    Returns ``(delta, zoom_consumed, notes, drift_camera)``: ``delta``
+    is a partial motion dict (only mentioned fields), ``zoom_consumed``
+    is True when a motion zoom intent should suppress the *geographic*
+    bare "zoom in/out" (bbox scaling), ``notes`` are unparsed fragments
+    for the caller to surface, and ``drift_camera`` is True when the
+    word "drift" was consumed as a camera move (it is otherwise a
+    currents keyword and must be left alone).
+    """
+    notes: List[str] = []
+    if not _MOTION_CONTEXT.search(scan_lower):
+        return {}, False, notes, False
+    delta: Dict[str, Any] = {}
+    zoom_consumed = False
+    drift_camera = False
+
+    if _MOTION_OFF.search(scan_lower):
+        delta.update({"zoom": "off", "pan": "off", "smooth": False})
+        return delta, True, notes, drift_camera
+
+    zm = _MOTION_ZOOM.search(scan_lower)
+    if zm and not _MOTION_ZOOM_OFF.search(scan_lower):
+        delta["zoom"] = zm.group(1)  # "in" | "out"
+        zoom_consumed = True
+    elif _MOTION_ZOOM_OFF.search(scan_lower):
+        delta["zoom"] = "off"
+        zoom_consumed = True
+
+    pm = _MOTION_PAN.search(scan_lower)
+    if pm and not _MOTION_PAN_OFF.search(scan_lower):
+        drift_camera = pm.group(0).lower().startswith("drift")
+        raw = pm.group(1).lower().replace(" ", "").replace("-", "")
+        delta["pan"] = _DIR_NORM.get(raw, raw)
+    elif _MOTION_PAN_OFF.search(scan_lower):
+        delta["pan"] = "off"
+
+    speed = _motion_speed(scan_lower)
+    targets = [k for k in ("zoom", "pan")
+               if k in delta and delta[k] != "off"]
+    if speed is not None:
+        if targets:
+            for key in targets:
+                delta[f"{key}_speed"] = speed
+        else:
+            notes.append(
+                "a camera-motion speed was mentioned but no zoom/pan "
+                "direction — say e.g. 'zoom in faster' or 'pan left "
+                "slower'")
+    else:
+        for key in targets:
+            delta[f"{key}_speed"] = _MOTION_SPEED_PRESETS["default"]
+
+    if _MOTION_SMOOTH_OFF.search(scan_lower):
+        delta["smooth"] = False
+    elif _MOTION_SMOOTH_ON.search(scan_lower):
+        delta["smooth"] = True
+        if "smooth_steps" not in delta:
+            delta["smooth_steps"] = 3
+
+    return delta, zoom_consumed, notes, drift_camera
+
+
 def refine_spec(spec: VizSpec, instruction: str,
                 today: Optional[_dt.date] = None) -> RefineResult:
     """Refine ``spec`` according to a plain-language ``instruction``.
 
     Only fields the instruction mentions are changed; everything else
-    is preserved. Raises :class:`UnparseableDescription` when the
+    is preserved. Camera-motion intents (zoom/pan/smooth — encode-time
+    settings, not spec fields) are returned as a partial dict on
+    ``result.motion`` for the caller to merge into its motion settings.
+    Raises :class:`UnparseableDescription` when the
     instruction matches no known refinement intent at all.
 
     Args:
@@ -366,6 +507,29 @@ def refine_spec(spec: VizSpec, instruction: str,
     elif _UNDERLAY_ON.search(scan_lower):
         set_field("underlay", True, "instruction turned the basemap on")
 
+    # --- camera motion (encode-time; carried on the result, not the spec) ---
+    (motion_delta, motion_zoom_consumed,
+     motion_notes, drift_camera) = _detect_motion(scan_lower)
+    unparsed.extend(motion_notes)
+    motion: Optional[Dict[str, Any]] = motion_delta or None
+    for key, value in motion_delta.items():
+        # refine_spec does not know the caller's current motion state,
+        # so the "old" side names the standing default (as for colormap).
+        applied.append(SpecChange(
+            f"motion.{key}", "(previous setting)", value,
+            f"instruction set camera motion {key} to {value!r}"))
+    ken_burns = bool(re.search(r"\bken\s+burns\b", scan_lower))
+    if ken_burns or drift_camera:
+        # Camera-motion words collide with variable keywords ("burns" is
+        # a fire keyword, "drift" a currents keyword). Motion was already
+        # detected above; blank them in both scan strings so a camera
+        # instruction never hijacks the variable. A bare "drift" with no
+        # camera reading ("show ocean drift") is left alone — it still
+        # means currents.
+        scan = re.sub(r"\bken\s+burns\b", " ", scan, flags=re.IGNORECASE)
+        scan = re.sub(r"\bdrift\b", " ", scan, flags=re.IGNORECASE)
+        scan_lower = scan.lower()
+
     # --- region ---
     region = find_region(scan)
     if region is not None and _REGION_VERBS.search(scan_lower):
@@ -374,7 +538,9 @@ def refine_spec(spec: VizSpec, instruction: str,
         set_field("bbox", tuple(region["bbox"]),
                   f"instruction refocused on {region['name']!r}")
     elif region is None:
-        if _ZOOM_IN_BARE.search(scan_lower):
+        # A motion-context "zoom in/out" (camera drift) suppresses the
+        # geographic bare zoom — the words were consumed above.
+        if _ZOOM_IN_BARE.search(scan_lower) and not motion_zoom_consumed:
             set_field("bbox", _zoom_bbox(values["bbox"], 0.5),
                       "instruction zoomed in (bbox halved about its center)")
         elif _ZOOM_OUT_BARE.search(scan_lower):
@@ -469,5 +635,5 @@ def refine_spec(spec: VizSpec, instruction: str,
             + "\n".join(f"  - {s}" for s in SUPPORTED_REFINEMENTS))
 
     new_spec = VizSpec(**values)
-    return RefineResult(spec=new_spec, cmap=cmap, applied=applied,
-                        unparsed=unparsed)
+    return RefineResult(spec=new_spec, cmap=cmap, motion=motion,
+                        applied=applied, unparsed=unparsed)
