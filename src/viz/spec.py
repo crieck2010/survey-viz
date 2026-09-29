@@ -160,6 +160,14 @@ class VizSpec:
             drawn. For ``"storm-tracks"`` the tint/hillshade draws under
             the tracks and coastlines draw above the tint but below the
             tracks.
+        underlay_topo: coastlines-only underlay switch (``True`` by
+            default). When ``underlay`` is ``True`` and this is ``False``,
+            the renderer skips the GEBCO tint/hillshade download (which
+            OOM-kills small VMs at global extents) and draws only the
+            Natural Earth coastline segments — the peer's
+            ``fetch_underlay(include_topo=False)`` path, tiny downloads,
+            no heavy rasters. Ignored when ``underlay`` is ``False``.
+            Recorded in the frame manifest via the underlay status.
         storm_name: named-storm selection for ``"storm-tracks"`` specs
             (e.g. ``"katrina"`` — case-insensitive; ``""`` means all
             storms in the bbox/time window). Set by the parser from
@@ -192,6 +200,7 @@ class VizSpec:
     overlays: Tuple[str, ...] = ()
     context: Tuple[str, ...] = ()
     underlay: bool = True
+    underlay_topo: bool = True
     storm_name: str = ""
     storm_rank: str = ""
     storm_top_n: Optional[int] = None
@@ -279,6 +288,10 @@ class VizSpec:
             raise TypeError(
                 "VizSpec.underlay: expected bool, got "
                 f"{type(self.underlay).__name__}")
+        if not isinstance(self.underlay_topo, bool):
+            raise TypeError(
+                "VizSpec.underlay_topo: expected bool, got "
+                f"{type(self.underlay_topo).__name__}")
         self.storm_name = str(self.storm_name or "").strip()
         self.storm_rank = str(self.storm_rank or "").strip().lower()
         if self.storm_rank not in ("", "strongest"):
@@ -316,7 +329,7 @@ class VizSpec:
             "overlays": list(self.overlays),
             "context": list(self.context),
             "underlay": self.underlay,
-            "storm_name": self.storm_name,
+            "underlay_topo": self.underlay_topo,            "storm_name": self.storm_name,
             "storm_rank": self.storm_rank,
             "storm_top_n": self.storm_top_n,
             "caption": self.caption,
@@ -336,7 +349,9 @@ class VizSpec:
         ``()``; ``"variable": "chlorophyll"`` (pre-v0.13.0) loads as
         the canonical ``"ocean-color"``; dicts without ``"caption"``
         (pre-v0.15.0) load with ``None`` (default footer); dicts without
-        ``"derived_note"`` (pre-v0.19.0) load with ``None``.
+        ``"derived_note"`` (pre-v0.19.0) load with ``None``; dicts without
+        ``"underlay_topo"`` (pre-v0.20.0) load with ``True`` (dataclass
+        default).
         """
         if not isinstance(data, dict):
             raise TypeError(f"VizSpec.from_dict: expected dict, got {type(data).__name__}")

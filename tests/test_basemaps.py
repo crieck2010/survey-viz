@@ -58,6 +58,103 @@ class TestRegistry:
         assert spec2 == spec
 
 
+    def test_underlay_topo_field_defaults_true(self):
+        spec = VizSpec(title="t", region_key="great-lakes",
+                       bbox=(-92.5, 41.5, -76.0, 49.0),
+                       variable="sst", start=dt.date(2026, 1, 1),
+                       end=dt.date(2026, 1, 31), cadence="monthly")
+        assert spec.underlay_topo is True
+
+    def test_underlay_topo_field_rejects_non_bool(self):
+        with pytest.raises(TypeError):
+            VizSpec(title="t", region_key="great-lakes",
+                    bbox=(-92.5, 41.5, -76.0, 49.0),
+                    variable="sst", start=dt.date(2026, 1, 1),
+                    end=dt.date(2026, 1, 31), cadence="monthly",
+                    underlay_topo="yes")
+
+    def test_underlay_topo_round_trips(self):
+        spec = VizSpec(title="t", region_key="great-lakes",
+                       bbox=(-92.5, 41.5, -76.0, 49.0),
+                       variable="sst", start=dt.date(2026, 1, 1),
+                       end=dt.date(2026, 1, 31), cadence="monthly",
+                       underlay_topo=False)
+        spec2 = VizSpec.from_dict(spec.to_dict())
+        assert spec2.underlay_topo is False
+        assert spec2 == spec
+
+    def test_underlay_topo_pre_v020_dicts_default_true(self):
+        spec = VizSpec(title="t", region_key="great-lakes",
+                       bbox=(-92.5, 41.5, -76.0, 49.0),
+                       variable="sst", start=dt.date(2026, 1, 1),
+                       end=dt.date(2026, 1, 31), cadence="monthly")
+        data = spec.to_dict()
+        del data["underlay_topo"]
+        spec2 = VizSpec.from_dict(data)
+        assert spec2.underlay_topo is True
+
+
+# --------------------------------------------------------------------------
+# Coastlines-only underlay (v0.20.0): underlay_topo=False skips GEBCO
+# --------------------------------------------------------------------------
+
+def _quake_spec(**kwargs):
+    args = dict(title="t", region_key="global",
+                bbox=(-180.0, -90.0, 180.0, 90.0),
+                variable="earthquakes", start=dt.date(2026, 1, 1),
+                end=dt.date(2026, 1, 31), cadence="monthly")
+    args.update(kwargs)
+    return VizSpec(**args)
+
+
+class TestCoastlinesOnly:
+    def _fetch_once(self, monkeypatch, **spec_kwargs):
+        from viz import render as vr
+        seen = {}
+
+        def fake_fetch(bbox, include_topo=True, **kwargs):
+            seen["include_topo"] = include_topo
+            return {"status": "ok", "reason": "", "topo": None,
+                    "coastlines": [[(-10.0, 42.0), (0.0, 43.0)]],
+                    "n_coastline_segments": 1,
+                    "resolution": None, "coastline_scale": "110m"}
+
+        monkeypatch.setattr(ul, "fetch_underlay", fake_fetch)
+        rgba, extent, coastlines, status = vr._fetch_underlay_once(
+            _quake_spec(**spec_kwargs), None, None, want=True)
+        return seen, rgba, extent, coastlines, status
+
+    def test_include_topo_false_passes_through(self, monkeypatch):
+        seen, rgba, extent, coastlines, status = self._fetch_once(
+            monkeypatch, underlay_topo=False)
+        assert seen["include_topo"] is False
+        assert rgba is None and extent is None
+        assert coastlines == [[(-10.0, 42.0), (0.0, 43.0)]]
+        assert status["status"] == "ok"
+        assert status["topo"] is False
+        assert status["coastline_segments"] == 1
+
+    def test_include_topo_true_by_default(self, monkeypatch):
+        seen, *_ = self._fetch_once(monkeypatch)
+        assert seen["include_topo"] is True
+
+    def test_bathymetry_still_skips_topo(self, monkeypatch):
+        # bathymetry/elevation never fetch GEBCO even with underlay_topo=True
+        from viz import render as vr
+        seen = {}
+
+        def fake_fetch(bbox, include_topo=True, **kwargs):
+            seen["include_topo"] = include_topo
+            return {"status": "ok", "reason": "", "topo": None,
+                    "coastlines": [], "n_coastline_segments": 0,
+                    "resolution": None, "coastline_scale": "110m"}
+
+        monkeypatch.setattr(ul, "fetch_underlay", fake_fetch)
+        vr._fetch_underlay_once(
+            _quake_spec(variable="bathymetry"), None, None, want=True)
+        assert seen["include_topo"] is False
+
+
 # --------------------------------------------------------------------------
 # Parser
 # --------------------------------------------------------------------------

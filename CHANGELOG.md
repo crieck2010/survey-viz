@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-09-29
+
+### Added
+- Coastlines-only underlay mode: ``VizSpec.underlay_topo`` (default
+  ``True``). When ``underlay`` is ``True`` and ``underlay_topo`` is
+  ``False``, the renderer calls the peer's
+  ``fetch_underlay(include_topo=False)`` — skipping the GEBCO
+  tint/hillshade download (which OOM-kills small VMs at global
+  extents) and drawing only the Natural Earth coastline segments
+  (tiny downloads, no heavy rasters). Round-trips through
+  ``to_dict``/``from_dict``; pre-v0.20.0 dicts load with ``True``.
+
 ## [0.19.0] - 2026-09-28
 
 ### Added

@@ -564,7 +564,8 @@ def _fetch_underlay_once(spec, plt, np, want: bool):
     from .underlay import fetch_underlay, hillshade
     info = fetch_underlay(
         tuple(float(v) for v in spec.bbox),
-        include_topo=spec.variable not in ("bathymetry", "elevation"))
+        include_topo=(spec.variable not in ("bathymetry", "elevation"))
+                     and getattr(spec, "underlay_topo", True))
     status = {
         "status": info["status"],
         "reason": info["reason"],
