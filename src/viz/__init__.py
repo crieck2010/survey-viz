@@ -27,6 +27,7 @@ except Exception:  # pragma: no cover - editable/uninstalled checkout
 
 from .aesthetic import (AestheticError, AestheticProfile, analyze_image,
                         fetch_image_bytes, suggest_aesthetic)
+from .aesthetic_render import AESTHETIC_PRESETS, PRESET_VARIABLES
 from .gazetteer import find_region, get_region, is_fetchable, load_regions
 from .insights import Caption, frame_stats, suggest_captions
 from .parser import UnparseableDescription, parse_description
@@ -49,6 +50,8 @@ __all__ = [
     "SpecChange",
     "AestheticError",
     "AestheticProfile",
+    "AESTHETIC_PRESETS",
+    "PRESET_VARIABLES",
     "Caption",
     "analyze_image",
     "fetch_image_bytes",

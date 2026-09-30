@@ -20,6 +20,8 @@ imports, never hard dependencies.
 ```bash
 pip install survey-viz            # parser + spec + gazetteer (stdlib + pyyaml)
 pip install "survey-viz[render]"  # + numpy/matplotlib for rendering
+pip install "survey-viz[aesthetics]"  # + the survey-aesthetics peer engine
+                                      # (mapped.earth preset path; GitHub release)
 ```
 
 Or from source:
@@ -135,6 +137,29 @@ page's `og:image` thumbnail is analyzed instead. Fonts, layouts, and
 transitions are not recoverable from a thumbnail and are not
 attempted. Uploads work too: `suggest_aesthetic(image_bytes)`.
 
+### mapped.earth aesthetic presets
+
+```python
+from viz import render_viz
+
+# LIC flow streaks on black (currents/wind), event glow (quakes/storms),
+# or 3D prism extrusion on paper (gridded variables like precipitation).
+frames, manifest = render_viz(
+    spec, field, None, out_dir="frames",
+    preset="dark_flow",       # or "dark_glow" / "paper_prism"
+    rotation="auto",          # optimal frame rotation for the region bbox
+    watermark="your_handle",  # opt-in brand furniture (off by default)
+)
+```
+
+The preset path renders through the survey-aesthetics engine:
+chrome-free full-bleed frames, serif titles with a time-window
+subtitle, custom legends (timeline scrubber, gradient bar, cumulative
+counter, date dial, vertical scale bar), fixed reel-wide color scales
+(no flicker), and an explicit statement of what is encoded
+("BRIGHTNESS = SPEED"). `preset=None` (default) keeps the legacy
+renderer byte-identical. See `docs/AESTHETICS.md` for the full
+contract, including honest limits.
 
 ## Parser rules (summary)
 

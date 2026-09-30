@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-09-30
+
+### Added
+- **mapped.earth aesthetic presets** via the **survey-aesthetics** peer
+  engine (new optional extra `pip install "survey-viz[aesthetics]"`,
+  pinned to the GitHub release): `render_viz(..., preset=...)` with
+  `dark_flow` (LIC flow-field streaks on black for `currents`/`wind` —
+  hue = water temperature in °F, brightness = speed),
+  `dark_glow` (additive event glow with bloom on black for
+  `earthquakes`/`storm-tracks` — brightness = magnitude / wind),
+  `paper_prism` (3D prism extrusion on warm paper for gridded
+  variables — height = value). New module `viz.aesthetic_render`
+  (peer stays optional: a missing engine raises an honest
+  `RuntimeError` with the install command; the legacy path never
+  imports it).
+- **Frame rotation**: `rotation="auto"` computes the optimal rotation
+  for the region bbox via the engine (`~90°` for regions much wider
+  than tall on the vertical canvas — the Lake Ontario case), or pass
+  degrees counter-clockwise. The map renders north-up on an enlarged
+  canvas, rotates, and center-crops to exactly 1080×1920; titles and
+  legends are drawn after rotation, unrotated, and the north arrow
+  rotates honestly with the map.
+- **Editorial title block**: serif title (always `spec.title` — explicit
+  user titles are never rewritten) + auto time-window subtitle
+  ("16–23 September 2026") or an explicit `subtitle`, monospace
+  readouts, custom legends per preset (timeline scrubber, gradient
+  bar, cumulative counter, date dial, vertical scale bar) instead of
+  the default colorbar, and the preset's honesty line
+  (`encoding_line`, e.g. "BRIGHTNESS = SPEED").
+- **Opt-in watermark**: `watermark="<handle>"` burns the brand + © +
+  data-source furniture via the engine; default off (watermarking is
+  the user's call).
+- **Fixed reel-wide scales**: `vmin`/`vmax`/`speed_max` computed once
+  from the full dataset (explicit `spec.vmin`/`vmax` win), fixed LIC
+  seed per reel — no flicker, byte-deterministic re-renders.
+- `viz render` CLI flags: `--preset`, `--rotation`, `--watermark`,
+  `--subtitle`, `--no-encoding-line`.
+- New docs: `docs/AESTHETICS.md` (presets, rotation, interop contract,
+  honest limits); README gains a presets section; `AESTHETIC_PRESETS`
+  exported from `viz`.
+- Fail-fast honesty: unknown presets, preset/variable mismatches,
+  preset-path options without a preset, and `story_captions`/`canvas`
+  combined with a preset all raise `ValueError` with the reason.
+
+### Fixed
+- Worked around two functions the engine's own `docs/API.md`
+  promises but its v0.1.0 top-level namespace omits
+  (`draw_north_arrow`, `close`): resolved from their submodules in
+  `viz.aesthetic_render._engine()` — the engine release is untouched.
+
 ## [0.21.0] - 2026-09-30
 
 ### Added

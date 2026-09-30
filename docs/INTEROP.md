@@ -90,6 +90,44 @@ The engine's `reason` string is recorded as
 rides into the frame manifest via `VizSpec.to_dict()` — the window
 decision is run provenance, not hidden metadata.
 
+## survey-aesthetics → survey-viz (mapped.earth preset rendering)
+
+survey-aesthetics is the suite's **"look"** engine. survey-viz never
+imports it at module load (the suite peer pattern: lazy import inside
+the preset branch of `render_viz`, duck-typed, one-directional, never
+a hard dependency — install with `pip install "survey-viz[aesthetics]"`,
+pinned to the GitHub release since the package is not on PyPI).
+
+`render_viz(..., preset="dark_flow"/"dark_glow"/"paper_prism")` routes
+to `viz.aesthetic_render.render_preset_viz`, which follows the exact
+call pattern in the engine's `docs/API.md`:
+
+- LIC streaks (`lic_texture`) for vector variables (`currents` with
+  u/v/temperature, `wind` with ERA5 u10/v10); fixed reel-wide
+  `vmin`/`vmax`/`speed_max` and a fixed LIC seed — never per-frame.
+- Event glow (`glow_from_grid` over disk-splatted events) for
+  `earthquakes`/`storm-tracks`; cumulative frames.
+- Prism extrusion (`prism_frame`) for gridded variables (grids > 44×60
+  are NaN-aware downsampled first).
+- Rotated framing (`optimal_rotation` / `rotate_frame_fill`):
+  the north-up map renders on an enlarged canvas, rotates, and
+  center-crops to exactly 1080×1920; titles, legends, and furniture
+  are drawn **after** rotation, unrotated.
+- Coastlines consume survey-viz's existing underlay segment format
+  (`[{"lons": [...], "lats": [...]}]`) — no adapter needed.
+
+The manifest keeps the `survey-viz.frame-manifest/1.0` schema and
+records `preset`, `rotation_deg`, `watermark`, `subtitle`, and the
+fixed scales, so survey-animate and survey-cache treat preset renders
+like any other frame batch.
+
+Two v0.1.0 engine gaps are worked around consumer-side (the release
+is never patched): `draw_north_arrow` and `close` are missing from
+the engine's top-level namespace despite its `docs/API.md` promising
+them — `viz.aesthetic_render._engine()` resolves both from their
+submodules. Sparse events are splatted as disks before the engine's
+blur passes (single-pixel spikes attenuate to invisibility).
+
 ## survey-viz → survey-animate (frames out)
 
 `render_viz` writes a plain directory of PNGs plus `manifest.json`:

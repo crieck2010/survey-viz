@@ -126,6 +126,9 @@ def _cmd_render(args: argparse.Namespace) -> int:
         frames, manifest = render_viz(
             spec, field, series, out_dir=args.out_dir, layout=args.layout,
             style=args.style, underlay=not args.no_underlay,
+            preset=args.preset, rotation=args.rotation,
+            watermark=args.watermark, subtitle=args.subtitle,
+            encoding_line=not args.no_encoding_line,
         )
     except RuntimeError as exc:  # e.g. matplotlib missing
         print(f"error: {exc}", file=sys.stderr)
@@ -171,6 +174,24 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--style", default=None, help="reel-dark (default) or light.")
     r.add_argument("--no-underlay", action="store_true",
                    help="Disable the GEBCO/coastline basemap underlay.")
+    r.add_argument("--preset", default=None,
+                   choices=["dark_flow", "dark_glow", "paper_prism"],
+                   help="mapped.earth aesthetic preset (needs the "
+                        "survey-aesthetics peer: pip install "
+                        "'survey-viz[aesthetics]').")
+    r.add_argument("--rotation", default=None,
+                   help="Frame rotation for the preset path: 'auto' "
+                        "(optimal for the region bbox) or degrees "
+                        "counter-clockwise.")
+    r.add_argument("--watermark", default=None,
+                   help="Brand handle burned into the preset furniture "
+                        "(off by default).")
+    r.add_argument("--subtitle", default=None,
+                   help="Explicit editorial subtitle (default: the time "
+                        "window, e.g. '16-23 September 2026').")
+    r.add_argument("--no-encoding-line", action="store_true",
+                   help="Hide the preset's honesty line "
+                        "(e.g. 'BRIGHTNESS = SPEED').")
     r.set_defaults(func=_cmd_render)
     return parser
 

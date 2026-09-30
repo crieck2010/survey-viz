@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "survey-viz"
-version = "0.21.0"
+version = "0.22.0"
 description = "Plain-English descriptions to vertical map frame sequences: deterministic parser, spec, and offline renderer."
 readme = "README.md"
 license = { text = "MIT" }
@@ -27,6 +27,11 @@ test = ["pytest"]
 # (optional; the parser keeps its documented past-1-year default when
 # the peer is absent — graceful degradation, never a hard dependency).
 timescales = ["survey-timescales>=0.1.0"]
+# mapped.earth aesthetic presets via the survey-aesthetics peer engine
+# (optional; render_viz(preset=...) raises an honest RuntimeError with
+# the install command when the peer is absent — the legacy renderer
+# never touches it). Pinned to the GitHub release (not on PyPI).
+aesthetics = ["survey-aesthetics @ git+https://github.com/crieck2010/survey-aesthetics@v0.1.0"]
 
 [project.scripts]
 viz = "viz.cli:main"

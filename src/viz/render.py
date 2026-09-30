@@ -705,6 +705,11 @@ def render_viz(
     cmap: Optional[str] = None,
     story_captions: bool = False,
     canvas=None,
+    preset: Optional[str] = None,
+    rotation: Any = None,
+    watermark: Optional[str] = None,
+    subtitle: Optional[str] = None,
+    encoding_line: bool = True,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -749,11 +754,53 @@ def render_viz(
     never covers content. ``None`` (default) keeps the historical
     1080x1920 layout, pixel-identical to <= 0.17. Malformed canvases
     fail fast before any frame renders.
+
+    ``preset`` selects the mapped.earth aesthetic path (see
+    :mod:`viz.aesthetic_render` and the survey-aesthetics peer):
+    ``"dark_flow"`` (LIC streaks for ``currents``/``wind``),
+    ``"dark_glow"`` (event glow for ``earthquakes``/``storm-tracks``),
+    or ``"paper_prism"`` (3D extrusion for gridded variables).
+    ``None`` (default) keeps the legacy renderer, byte-identical to
+    <= 0.21. The preset-path options ``rotation`` (``None``/``"auto"``/
+    degrees), ``watermark`` (brand handle, ``None`` = off),
+    ``subtitle`` (explicit editorial subtitle), and ``encoding_line``
+    (the preset's honesty line, default True) require ``preset`` — they
+    fail fast without it. ``story_captions`` and ``canvas`` are legacy-
+    path features and fail fast with a preset (the preset has its own
+    editorial system and layout grammar).
     """
     if layout != "reel-vertical":
         raise ValueError(f"Unknown layout: {layout!r} (only 'reel-vertical' in v0.1.0)")
     # Fail fast on a bad canvas before any rendering work.
     _resolve_canvas(canvas)
+    # Aesthetic preset path (survey-aesthetics engine): routes before
+    # the legacy dispatch. The lazy import keeps the peer optional —
+    # the legacy path never touches it (no circular import either).
+    preset_requested = (
+        preset is not None or rotation is not None
+        or watermark is not None or subtitle is not None
+        or encoding_line is not True)
+    if preset_requested:
+        if preset is None:
+            raise ValueError(
+                "rotation/watermark/subtitle/encoding_line need "
+                "preset='dark_flow'/'dark_glow'/'paper_prism' — they are "
+                "preset-path options with no meaning on the legacy renderer")
+        if story_captions:
+            raise ValueError(
+                "story_captions is a legacy-path feature; the preset path "
+                "has its own editorial system")
+        if canvas is not None:
+            raise ValueError(
+                "canvas (platform safe zones) is a legacy-path feature; "
+                "the preset path uses its own layout grammar")
+        from .aesthetic_render import render_preset_viz
+        want_underlay = underlay if underlay is not None else bool(spec.underlay)
+        return render_preset_viz(
+            spec, field, out_dir, preset=preset, rotation=rotation,
+            watermark=watermark, subtitle=subtitle,
+            encoding_line=encoding_line, underlay=want_underlay,
+            cmap=cmap, style=style)
     style = style or spec.style
     if style not in _STYLE:
         raise ValueError(f"Unknown style: {style!r} (expected one of {sorted(_STYLE)})")

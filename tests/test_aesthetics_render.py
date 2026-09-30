@@ -1,0 +1,396 @@
+"""Tests for the mapped.earth aesthetic preset path (viz.aesthetic_render).
+
+Skipped entirely if matplotlib/numpy or the survey-aesthetics peer are
+missing. The basemap underlay is stubbed offline by tests/conftest.py.
+"""
+
+import datetime as dt
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+matplotlib = pytest.importorskip("matplotlib")
+np = pytest.importorskip("numpy")
+pytest.importorskip("aesthetics")
+
+from viz.aesthetic_render import AESTHETIC_PRESETS, render_preset_viz
+from viz.render import render_viz
+from viz.spec import VizSpec
+
+BBOX = (-92.5, 46.0, -84.5, 48.8)  # Lake Superior: elongated E-W
+
+
+def _spec(**over):
+    kw = dict(
+        title="Lake Superior",
+        region_key="lake-superior",
+        bbox=BBOX,
+        variable="sst",
+        start=dt.date(2026, 9, 1),
+        end=dt.date(2026, 9, 3),
+        cadence="daily",
+    )
+    kw.update(over)
+    return VizSpec(**kw)
+
+
+def _scalar_field(n_days=3, ny=8, nx=10, seed=11):
+    rng = np.random.default_rng(seed)
+    lats = np.linspace(46.0, 48.8, ny)
+    lons = np.linspace(-92.5, -84.5, nx)
+    times = [dt.date(2026, 9, d) for d in range(1, n_days + 1)]
+    values = rng.normal(10, 3, size=(n_days, ny, nx))
+    return {"times": times, "lats": lats, "lons": lons, "values": values}
+
+
+class _FakeCurrents:
+    """CurrentField-shaped duck-type with u/v/temperature."""
+
+    def __init__(self, n_days=2, ny=8, nx=10, temperature=True):
+        rng = np.random.default_rng(5)
+        self.lats = np.linspace(46.0, 48.8, ny)
+        self.lons = np.linspace(-92.5, -84.5, nx)
+        self.times = [f"2026-09-{d:02d}T00:00:00" for d in range(1, n_days + 1)]
+        nt = len(self.times)
+        self.u = rng.normal(0, 0.3, (nt, ny, nx))
+        self.v = rng.normal(0, 0.3, (nt, ny, nx))
+        self.temperature = (rng.normal(15, 3, (nt, ny, nx))
+                            if temperature else None)
+        self.provenance = {"source": "NOAA LMHOFS"}
+
+
+def _storm_field():
+    tracks = []
+    for s in range(2):
+        n = 4
+        tracks.append({
+            "name": f"Storm{s}", "sid": f"202626{s}N12345",
+            # Deliberately timezone-naive ISO strings (IBTrACS-style).
+            "times": [f"2026-09-0{d + 1}T{h:02d}:00:00"
+                      for d, h in [(1, 0), (1, 12), (2, 0), (2, 12)][:n]],
+            "lats": [25.0 + i + s for i in range(n)],
+            "lons": [-80.0 + 2 * i for i in range(n)],
+            "winds": [40.0 + 15 * i for i in range(n)],
+        })
+    return {"storm_tracks": tracks, "provenance": {"source": "IBTrACS"}}
+
+
+def _quake_field():
+    events = []
+    for d in (1, 2, 3):
+        for k in range(3):
+            events.append({
+                "event_id": f"e{d}{k}",
+                "time": f"2026-09-{d:02d}T{k * 8:02d}:00:00Z",
+                "lat": 46.5 + 0.1 * d, "lon": -89.0 + 0.1 * k,
+                "depth_km": 10.0, "magnitude": 2.5 + 0.5 * k,
+                "mag_type": "ml", "place": "test",
+                "event_type": "earthquake"})
+    return {"quake_events": events, "provenance": {"source": "USGS ComCat"}}
+
+
+def _png_bytes(path):
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+# ---------------------------------------------------------------------------
+# Backwards compatibility: the legacy path is untouched
+# ---------------------------------------------------------------------------
+
+def test_legacy_path_byte_identical_with_new_kwargs(tmp_path):
+    """preset=None + the new kwargs at defaults reproduces legacy output."""
+    field = _scalar_field()
+    spec = _spec()
+    a, _ = render_viz(spec, field, None, out_dir=tmp_path / "a",
+                      underlay=False)
+    b, _ = render_viz(spec, field, None, out_dir=tmp_path / "b",
+                      underlay=False, preset=None, rotation=None,
+                      watermark=None, subtitle=None, encoding_line=True)
+    assert len(a) == len(b) == 3
+    for fa, fb in zip(a, b):
+        assert _png_bytes(fa) == _png_bytes(fb)
+
+
+def test_preset_names():
+    assert set(AESTHETIC_PRESETS) == {"dark_flow", "dark_glow", "paper_prism"}
+
+
+# ---------------------------------------------------------------------------
+# Fail-fast validation
+# ---------------------------------------------------------------------------
+
+def test_unknown_preset_raises(tmp_path):
+    with pytest.raises(ValueError, match="unknown preset"):
+        render_viz(_spec(variable="currents"), _FakeCurrents(), None,
+                   out_dir=tmp_path, preset="nope", underlay=False)
+
+
+def test_preset_variable_mismatch_raises(tmp_path):
+    # dark_flow needs vector data; sst has none.
+    with pytest.raises(ValueError, match="no compatible data"):
+        render_viz(_spec(variable="sst"), _scalar_field(), None,
+                   out_dir=tmp_path, preset="dark_flow", underlay=False)
+    # dark_glow needs events.
+    with pytest.raises(ValueError, match="no compatible data"):
+        render_viz(_spec(variable="sst"), _scalar_field(), None,
+                   out_dir=tmp_path, preset="dark_glow", underlay=False)
+
+
+def test_rotation_needs_preset(tmp_path):
+    with pytest.raises(ValueError, match="need preset"):
+        render_viz(_spec(), _scalar_field(), None, out_dir=tmp_path,
+                   rotation="auto", underlay=False)
+    with pytest.raises(ValueError, match="rotation"):
+        render_viz(_spec(), _scalar_field(), None, out_dir=tmp_path,
+                   rotation="bogus", preset="paper_prism", underlay=False)
+
+
+def test_story_captions_and_canvas_rejected_with_preset(tmp_path):
+    spec = _spec(variable="tp")
+    with pytest.raises(ValueError, match="story_captions"):
+        render_viz(spec, _scalar_field(), None, out_dir=tmp_path,
+                   preset="paper_prism", story_captions=True,
+                   underlay=False)
+    with pytest.raises(ValueError, match="canvas"):
+        render_viz(spec, _scalar_field(), None, out_dir=tmp_path,
+                   preset="paper_prism", canvas={"platform": "x"},
+                   underlay=False)
+
+
+def test_missing_peer_raises_honest_error(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "aesthetics", None)
+    with pytest.raises(RuntimeError, match="survey-aesthetics"):
+        render_viz(_spec(variable="currents"), _FakeCurrents(), None,
+                   out_dir=tmp_path, preset="dark_flow", underlay=False)
+
+
+# ---------------------------------------------------------------------------
+# dark_flow
+# ---------------------------------------------------------------------------
+
+def test_dark_flow_renders_and_manifest(tmp_path):
+    spec = _spec(variable="currents")
+    frames, manifest_path = render_viz(
+        spec, _FakeCurrents(), None, out_dir=tmp_path / "f",
+        preset="dark_flow", underlay=False)
+    assert len(frames) == 2
+    from PIL import Image
+    assert Image.open(frames[0]).size == (1080, 1920)
+    manifest = json.loads(Path(manifest_path).read_text())
+    r = manifest["render"]
+    assert r["preset"] == "dark_flow"
+    assert r["preset_cmap"] == "turbo"
+    assert r["rotation_deg"] == 0.0
+    assert r["watermark"] is None
+    assert r["vmin"] < r["vmax"]
+    assert r["speed_max"] > 0
+    assert r["scalar"] == "water temperature (°F)"
+    assert "survey-aesthetics" in r["engine"]
+
+
+def test_dark_flow_fixed_scales_from_full_dataset(tmp_path):
+    field = _FakeCurrents()
+    spec = _spec(variable="currents")
+    _, manifest_path = render_viz(spec, field, None, out_dir=tmp_path,
+                                  preset="dark_flow", underlay=False)
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    expected = np.asarray(field.temperature) * 9.0 / 5.0 + 32.0
+    assert r["vmin"] == round(float(np.nanmin(expected)), 1)
+    assert r["vmax"] == round(float(np.nanmax(expected)), 1)
+
+
+def test_dark_flow_deterministic(tmp_path):
+    spec = _spec(variable="currents")
+    a, _ = render_viz(spec, _FakeCurrents(), None, out_dir=tmp_path / "a",
+                      preset="dark_flow", underlay=False)
+    b, _ = render_viz(spec, _FakeCurrents(), None, out_dir=tmp_path / "b",
+                      preset="dark_flow", underlay=False)
+    for fa, fb in zip(a, b):
+        assert _png_bytes(fa) == _png_bytes(fb)
+
+
+def test_dark_flow_without_temperature_falls_back_to_speed(tmp_path):
+    spec = _spec(variable="currents")
+    frames, manifest_path = render_viz(
+        spec, _FakeCurrents(temperature=False), None, out_dir=tmp_path,
+        preset="dark_flow", underlay=False)
+    assert len(frames) == 2
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["scalar"] == "current speed (m/s)"
+
+
+def test_dark_flow_explicit_vmin_vmax_win(tmp_path):
+    spec = _spec(variable="currents", vmin=32.0, vmax=80.0)
+    _, manifest_path = render_viz(spec, _FakeCurrents(), None,
+                                  out_dir=tmp_path, preset="dark_flow",
+                                  underlay=False)
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["vmin"] == 32.0 and r["vmax"] == 80.0
+
+
+def test_dark_flow_cmap_override(tmp_path):
+    spec = _spec(variable="currents")
+    _, manifest_path = render_viz(spec, _FakeCurrents(), None,
+                                  out_dir=tmp_path, preset="dark_flow",
+                                  cmap="viridis", underlay=False)
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["cmap"] == "viridis"
+    assert r["cmap_overridden"] is True
+
+
+# ---------------------------------------------------------------------------
+# dark_glow
+# ---------------------------------------------------------------------------
+
+def test_dark_glow_quakes(tmp_path):
+    spec = _spec(variable="earthquakes")
+    frames, manifest_path = render_viz(
+        spec, _quake_field(), None, out_dir=tmp_path / "f",
+        preset="dark_glow", underlay=False)
+    assert len(frames) == 3  # one frame per day, Sep 1-3
+    from PIL import Image
+    assert Image.open(frames[0]).size == (1080, 1920)
+    manifest = json.loads(Path(manifest_path).read_text())
+    r = manifest["render"]
+    assert r["preset"] == "dark_glow"
+    assert r["preset_cmap"] == "inferno"
+    assert "magnitude" in r["encoding"].lower()
+    # Frames are cumulative: later frames differ from earlier ones.
+    assert _png_bytes(frames[0]) != _png_bytes(frames[-1])
+
+
+def test_dark_glow_deterministic(tmp_path):
+    spec = _spec(variable="earthquakes")
+    a, _ = render_viz(spec, _quake_field(), None, out_dir=tmp_path / "a",
+                      preset="dark_glow", underlay=False)
+    b, _ = render_viz(spec, _quake_field(), None, out_dir=tmp_path / "b",
+                      preset="dark_glow", underlay=False)
+    for fa, fb in zip(a, b):
+        assert _png_bytes(fa) == _png_bytes(fb)
+
+
+def test_dark_glow_empty_events(tmp_path):
+    spec = _spec(variable="earthquakes")
+    field = {"quake_events": [], "provenance": {}}
+    frames, _ = render_viz(spec, field, None, out_dir=tmp_path,
+                           preset="dark_glow", underlay=False)
+    assert len(frames) == 3  # honest empty frames, never a crash
+
+
+def test_dark_glow_storm_tracks(tmp_path):
+    spec = _spec(variable="storm-tracks",
+                 bbox=(-85.0, 20.0, -65.0, 35.0), region_key="gulf-of-mexico")
+    frames, manifest_path = render_viz(
+        spec, _storm_field(), None, out_dir=tmp_path,
+        preset="dark_glow", underlay=False)
+    assert len(frames) == 3
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert "wind" in r["encoding"]
+    assert _png_bytes(frames[0]) != _png_bytes(frames[-1])  # cumulative
+
+
+# ---------------------------------------------------------------------------
+# paper_prism
+# ---------------------------------------------------------------------------
+
+def test_paper_prism_renders_and_manifest(tmp_path):
+    spec = _spec(variable="tp")
+    frames, manifest_path = render_viz(
+        spec, _scalar_field(), None, out_dir=tmp_path / "f",
+        preset="paper_prism", underlay=False)
+    assert len(frames) == 3
+    from PIL import Image
+    assert Image.open(frames[0]).size == (1080, 1920)
+    manifest = json.loads(Path(manifest_path).read_text())
+    r = manifest["render"]
+    assert r["preset"] == "paper_prism"
+    assert r["preset_cmap"] == "Blues"
+    assert r["vmin"] == 0.0  # precipitation is zero-based
+    assert r["prism_grid"] == [8, 10]
+
+
+def test_paper_prism_downsamples_large_grids(tmp_path):
+    spec = _spec(variable="tp")
+    field = _scalar_field(ny=100, nx=140)
+    _, manifest_path = render_viz(spec, field, None, out_dir=tmp_path,
+                                  preset="paper_prism", underlay=False)
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    ny, nx = r["prism_grid"]
+    assert ny <= 44 and nx <= 60
+
+
+def test_paper_prism_deterministic(tmp_path):
+    spec = _spec(variable="tp")
+    a, _ = render_viz(spec, _scalar_field(), None, out_dir=tmp_path / "a",
+                      preset="paper_prism", underlay=False)
+    b, _ = render_viz(spec, _scalar_field(), None, out_dir=tmp_path / "b",
+                      preset="paper_prism", underlay=False)
+    for fa, fb in zip(a, b):
+        assert _png_bytes(fa) == _png_bytes(fb)
+
+
+# ---------------------------------------------------------------------------
+# Rotation, watermark, subtitle, encoding line
+# ---------------------------------------------------------------------------
+
+def test_rotation_auto_elongated_bbox(tmp_path):
+    spec = _spec(variable="tp")  # BBOX is ~3x wider than tall
+    _, manifest_path = render_viz(spec, _scalar_field(), None,
+                                  out_dir=tmp_path, preset="paper_prism",
+                                  rotation="auto", underlay=False)
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["rotation_requested"] == "auto"
+    assert r["rotation_deg"] == pytest.approx(90.0)
+
+
+def test_rotation_auto_square_bbox_is_zero(tmp_path):
+    spec = _spec(variable="tp", bbox=(-10.0, 40.0, 10.0, 60.0),
+                 region_key="custom")
+    _, manifest_path = render_viz(spec, _scalar_field(), None,
+                                  out_dir=tmp_path, preset="paper_prism",
+                                  rotation="auto", underlay=False)
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["rotation_deg"] == pytest.approx(0.0, abs=1.0)
+
+
+def test_rotation_manual_degrees(tmp_path):
+    spec = _spec(variable="tp")
+    frames, manifest_path = render_viz(
+        spec, _scalar_field(), None, out_dir=tmp_path,
+        preset="paper_prism", rotation=45, underlay=False)
+    from PIL import Image
+    assert Image.open(frames[0]).size == (1080, 1920)  # still exact canvas
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["rotation_deg"] == 45.0
+
+
+def test_watermark_and_subtitle(tmp_path):
+    spec = _spec(variable="tp")
+    _, manifest_path = render_viz(
+        spec, _scalar_field(), None, out_dir=tmp_path,
+        preset="paper_prism", watermark="test_handle",
+        subtitle="A custom window", underlay=False)
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["watermark"] == "test_handle"
+    assert r["subtitle"] == "A custom window"
+
+
+def test_default_subtitle_names_window(tmp_path):
+    spec = _spec(variable="tp")
+    _, manifest_path = render_viz(spec, _scalar_field(), None,
+                                  out_dir=tmp_path, preset="paper_prism",
+                                  underlay=False)
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["subtitle"] == "1–3 September 2026"
+
+
+def test_encoding_line_toggle(tmp_path):
+    spec = _spec(variable="tp")
+    _, manifest_path = render_viz(
+        spec, _scalar_field(), None, out_dir=tmp_path,
+        preset="paper_prism", encoding_line=False, underlay=False)
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["encoding_line"] is False
