@@ -1,4 +1,4 @@
-# survey-viz parser grammar (deterministic, offline, stdlib-only)
+# survey-viz parser grammar (deterministic, offline)
 
 `viz.parser.parse_description(text, title=None, today=None) -> VizSpec`
 
@@ -147,7 +147,38 @@ the cap; v0.2.0 spec dicts (no `"overlays"` key) deserialize unchanged.
 | `this year` | Jan 1 of current year | today |
 | `2015 to 2020`, `2015-2020`, `2015–2020`, `2015 through 2020` | Jan 1, 2015 | Dec 31, 2020 |
 | `since 2018` | Jan 1, 2018 | today |
-| *(no time phrase)* | **today − 1 year (documented default)** | today |
+| *(no time phrase)* | **smart default via the survey-timescales peer** (v0.21.0; past-1-year default when the peer is absent) | today or season end |
+
+### 3a. Smart default windows (survey-timescales peer, v0.21.0)
+
+When no time phrase is parsed, the parser no longer hard-codes
+"past 1 year": it consults the **survey-timescales** peer
+(`suggest_window`, survey-timescales v0.1.0+) and uses the returned
+start/end. The peer is OPTIONAL — lazy import, never a hard
+dependency (the suite peer pattern, see docs/INTEROP.md); when it is
+absent the parser keeps the old past-1-year default, and variables
+unknown to the peer's registry (`burn-scar`, `power-outage`, ...)
+or time-invariant underlays (`bathymetry`, `elevation` ->
+`StaticVariableError`) also keep the old default.
+
+- **Season language** (`fire season`, `wildfire season`,
+  `hurricane`/`typhoon`/`cyclone`/`storm season`, `melt season`,
+  `monsoon`/`dry`/`wet`/`rainy`/`ice`/`growing season`) requests the
+  engine's `intent="season"` window: "California fire season" ->
+  this year's May–Oct; "Arctic melt season" -> Jun–Sep. Variables
+  whose registry entry has no `season` mode (e.g. `wind` for
+  "hurricane season") fall back to the engine's default mode.
+- **Explicit user dates ALWAYS win** (engine precedence rule #1):
+  the engine is never consulted when a time phrase was parsed, so
+  "California fire season 2020 to 2022" keeps 2020-01-01–2022-12-31
+  and "wildfires over the past 5 years" keeps the 5-year window.
+- The engine's `reason` string is recorded as
+  `VizSpec.timescale_reason` ("" when the peer was not consulted) and
+  flows into the frame manifest's `spec` section — the window
+  decision is part of run provenance.
+- `tp` (precipitation) passes `source=` so the engine disambiguates
+  ERA5 vs IMERG: the pinned source when the description pinned one,
+  else `era5` (the regional default).
 
 Notes:
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "survey-viz"
-version = "0.20.0"
+version = "0.21.0"
 description = "Plain-English descriptions to vertical map frame sequences: deterministic parser, spec, and offline renderer."
 readme = "README.md"
 license = { text = "MIT" }
@@ -23,6 +23,10 @@ dependencies = ["pyyaml"]
 [project.optional-dependencies]
 render = ["numpy", "matplotlib"]
 test = ["pytest"]
+# Smart default time windows via the survey-timescales peer engine
+# (optional; the parser keeps its documented past-1-year default when
+# the peer is absent — graceful degradation, never a hard dependency).
+timescales = ["survey-timescales>=0.1.0"]
 
 [project.scripts]
 viz = "viz.cli:main"

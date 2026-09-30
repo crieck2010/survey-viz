@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-09-30
+
+### Added
+- Smart default time windows via the **survey-timescales** peer
+  (survey-timescales v0.1.0+, `pip install survey-viz[timescales]`):
+  when the description has no time phrase, `parse_description` now
+  consults `suggest_window(variable, region=region_key, today=today)`
+  instead of hard-coding the past-1-year default —
+  - season language (`fire season`, `hurricane season`,
+    `melt season`, `monsoon`/`dry`/`wet`/`rainy`/`ice`/`growing`
+    season, ...) requests the engine's `intent="season"` window
+    ("California fire season" -> this year's May–Oct; "Arctic melt
+    season" -> Jun–Sep);
+  - `tp` (precipitation) passes `source=` so the engine
+    disambiguates ERA5 vs IMERG (the pinned source, else `era5`);
+  - new `VizSpec.timescale_reason` records the engine's `reason`
+    string (`""` when the peer was not consulted) and rides into the
+    frame manifest via `to_dict()`/`from_dict()` — pre-v0.21.0 dicts
+    load with `""`;
+  - graceful degradation throughout: peer absent (`ImportError`),
+    unknown variable (`UnknownVariableError`), or time-invariant
+    underlay (`StaticVariableError` for `bathymetry`/`elevation`) all
+    keep the old past-1-year default — the parser works exactly as
+    before.
+- **Explicit user dates always win** (engine precedence rule #1): the
+  peer is never consulted when a time phrase was parsed — explicit
+  ranges and relative phrases (`past 5 years`, `last summer`, ...)
+  produce byte-identical specs to v0.20.0, with `timescale_reason`
+  `""`.
+- `docs/PARSER.md` (new "3a. Smart default windows" section) and
+  `docs/INTEROP.md` (new "survey-timescales → survey-viz" section)
+  document the integration.
+
 ## [0.20.0] - 2026-09-29
 
 ### Added

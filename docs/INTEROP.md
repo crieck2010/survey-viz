@@ -62,6 +62,34 @@ field = fetch(spec.bbox, spec.start, spec.end, stride_days=30)
 frames, manifest = render_viz(spec, field, None, out_dir="frames")
 ```
 
+## survey-timescales → survey-viz (smart default time windows)
+
+survey-timescales is the suite's **"when"** engine. survey-viz never
+imports it at module load (the suite peer pattern: lazy import,
+duck-typed, one-directional, never a hard dependency — install with
+`pip install survey-viz[timescales]` for the smart defaults).
+
+In `viz.parser.parse_description`, when `_parse_time` finds no time
+phrase, the old hard-coded past-1-year fallback is replaced by
+`suggest_window(variable, region=region_key, today=today)`:
+
+- Season language in the description ("fire season", "hurricane
+  season", "melt season", ...) requests `intent="season"`; variables
+  with no `season` mode fall back to the engine's default mode.
+- **Explicit user dates always win** (engine precedence rule #1):
+  the engine is never consulted when a time phrase was parsed.
+- `variable == "tp"` passes `source=` (the pinned source, or `"era5"`
+  for the regional default) so the engine disambiguates ERA5 vs IMERG.
+- Peer absent (`ImportError`), unknown variable
+  (`UnknownVariableError`), or time-invariant underlay
+  (`StaticVariableError` for `bathymetry`/`elevation`) → the old
+  past-1-year default; the parser works exactly as before.
+
+The engine's `reason` string is recorded as
+`VizSpec.timescale_reason` ("" when the peer was not consulted) and
+rides into the frame manifest via `VizSpec.to_dict()` — the window
+decision is run provenance, not hidden metadata.
+
 ## survey-viz → survey-animate (frames out)
 
 `render_viz` writes a plain directory of PNGs plus `manifest.json`:

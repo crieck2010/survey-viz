@@ -299,7 +299,11 @@ attempted. Uploads work too: `suggest_aesthetic(image_bytes)`.
   `manifest["render"]["canvas"]`. See [docs/INTEROP.md](docs/INTEROP.md).
 - **Time**: `past N years`, `last N years`, `past N months`, `last summer`
   (most recent fully-completed Jun–Aug), `this year`, `2015 to 2020` /
-  `2015-2020`, `since 2018`. **No time phrase → past 1 year.**
+  `2015-2020`, `since 2018`. **No time phrase → smart default** via the
+  optional survey-timescales peer (`pip install survey-viz[timescales]`):
+  season language (`fire season`, `hurricane season`, `melt season`, ...)
+  aligns to the current season, otherwise the engine's default window
+  (past 1 year when the peer is absent). Explicit dates always win.
 - Anything else raises `UnparseableDescription` with a helpful message,
   2–3 working examples, and a note about the future LLM upgrade path.
 

@@ -1,9 +1,13 @@
-"""Deterministic, offline, stdlib-only description parser.
+"""Deterministic, offline description parser.
 
 :func:`parse_description` turns plain English like
 ``"Lake Superior surface temperature over the past 5 years"``
 into a :class:`viz.spec.VizSpec`. No AI, no network: regex + gazetteer
-lookup only. The full grammar is documented in ``docs/PARSER.md``.
+lookup only, plus an OPTIONAL survey-timescales peer
+(survey-timescales v0.1.0+) for smart default time windows — the peer
+is imported lazily and the parser keeps its documented past-1-year
+default when it is absent (graceful degradation). The full grammar is
+documented in ``docs/PARSER.md``.
 
 Raises :class:`UnparseableDescription` when no region matches, when time
 phrases conflict, or when an explicit year range is invalid.
@@ -58,6 +62,11 @@ _VARIABLE_PATTERNS = {
         r"\bice\s*concentrations?\b",
         r"\bice\s*covers?\b",
         r"\bice\s*extents?\b",
+        # "melt season" is unambiguous sea-ice intent (v0.21.0): the
+        # Arctic melt season is the sea-ice minimum window, and the
+        # phrase would otherwise match no variable keyword (defaulting
+        # to sst — the wrong product for "Arctic melt season").
+        r"\bmelt\s*seasons?\b",
         r"\bice\b",
     ],
     "fire": [
@@ -578,6 +587,95 @@ def _parse_time(text: str, today: _dt.date) -> Tuple[Optional[_dt.date], Optiona
     return start, end, matched
 
 
+# --- season language (survey-timescales v0.21.0) ------------------------------
+# When the description names a season ("fire season", "hurricane
+# season", "melt season", ...) AND no explicit time phrase was parsed,
+# the parser asks the survey-timescales peer for an intent="season"
+# window instead of the documented past-1-year default. Explicit user
+# dates ALWAYS win — the engine is never consulted when a time phrase
+# was parsed (engine precedence rule #1).
+_SEASON_PATTERNS = [
+    r"\bfire\s+seasons?\b",
+    r"\bwildfire\s+seasons?\b",
+    r"\bhurricane\s+seasons?\b",
+    r"\btyphoon\s+seasons?\b",
+    r"\bcyclone\s+seasons?\b",
+    r"\bstorm\s+seasons?\b",
+    r"\bmelt\s+seasons?\b",
+    r"\bmonsoon\s+seasons?\b",
+    r"\bdry\s+seasons?\b",
+    r"\bwet\s+seasons?\b",
+    r"\brainy\s+seasons?\b",
+    r"\bice\s+seasons?\b",
+    r"\bgrowing\s+seasons?\b",
+]
+
+
+def _detect_season_language(text: str) -> bool:
+    """True when the description names a season (see _SEASON_PATTERNS)."""
+    lowered = text.lower()
+    return any(re.search(p, lowered) for p in _SEASON_PATTERNS)
+
+
+def _suggest_timescale_window(
+    variable: str,
+    region_key: str,
+    today: _dt.date,
+    season_intent: bool,
+    source: str,
+) -> Tuple[_dt.date, _dt.date, str]:
+    """Resolve the default time window via the survey-timescales peer.
+
+    Returns ``(start, end, reason)`` where ``reason`` is the engine's
+    human-readable window justification (``""`` when the peer was not
+    consulted). The peer (survey-timescales v0.1.0+) is an OPTIONAL
+    peer — wired like the other suite peers (lazy import, duck-typed,
+    never a hard dependency):
+
+    * peer absent (ImportError) -> the documented past-1-year default;
+      the parser works exactly as before (graceful degradation).
+    * variable unknown to the registry (e.g. ``"burn-scar"``,
+      ``"power-outage"``) or a time-invariant underlay
+      (``"bathymetry"``/``"elevation"`` -> ``StaticVariableError``) ->
+      the documented default; those variables keep their old windows.
+    * ``season_intent`` requests ``intent="season"``; variables whose
+      registry entry has no ``"season"`` mode (the engine raises
+      ``ValueError``) fall back to the engine's default mode.
+    * ``variable == "tp"`` passes ``source=`` so the engine can
+      disambiguate ERA5 vs IMERG (engine author gotcha #2): the pinned
+      source when the description pinned one, else ``"era5"`` — the
+      regional default :func:`viz.sources.resolve_source` applies.
+
+    Explicit user dates NEVER reach this function (see
+    :func:`parse_description`) — precedence rule #1.
+    """
+    try:
+        from timescales import (
+            StaticVariableError,
+            UnknownVariableError,
+            suggest_window,
+        )
+    except ImportError:
+        return _subtract_years(today, 1), today, ""
+    kwargs = {"variable": variable, "region": region_key, "today": today}
+    if variable == "tp":
+        kwargs["source"] = source or "era5"
+    try:
+        if season_intent:
+            try:
+                suggestion = suggest_window(intent="season", **kwargs)
+            except ValueError:
+                # 'season' is not one of this variable's registry modes
+                # (e.g. "wind", "storm-tracks") — the engine's default
+                # mode applies instead.
+                suggestion = suggest_window(**kwargs)
+        else:
+            suggestion = suggest_window(**kwargs)
+    except (StaticVariableError, UnknownVariableError):
+        return _subtract_years(today, 1), today, ""
+    return suggestion.start, suggestion.end, suggestion.reason
+
+
 def _parse_storm_request(text: str) -> Optional[Tuple[str, str, Optional[int]]]:
     """Detect storm track/identity/ranking intent.
 
@@ -999,7 +1097,7 @@ def _failure_message(
     if time_phrases:
         understood.append(f"time={time_phrases[0]}")
     elif default_time:
-        understood.append("time=<defaulted to past 1 year>")
+        understood.append("time=<smart default via survey-timescales peer>")
     else:
         understood.append("time=<none>")
     failed = []
@@ -1072,15 +1170,28 @@ def parse_description(
         )
 
     default_time = False
+    timescale_reason = ""
+    # The source pin is resolved before the time window: a "tp"
+    # (precipitation) request passes it to the survey-timescales peer
+    # so the engine can disambiguate ERA5 vs IMERG (engine author
+    # gotcha #2).
+    source, source_reason = _parse_source(normalized, variable)
     if start is None or end is None:
-        # Documented default rule: no time phrase -> past 1 year.
-        start, end = _subtract_years(today, 1), today
+        # Documented default rule (v0.21.0): no time phrase -> consult
+        # the survey-timescales peer for a smart window; season
+        # language ("fire season", "hurricane season", "melt season",
+        # ...) requests the engine's season intent. Explicit user
+        # dates NEVER reach the engine — they always win (engine
+        # precedence rule #1). When the peer is absent (or the variable
+        # is unknown/static to it) the old past-1-year default applies.
+        season_intent = _detect_season_language(normalized)
+        start, end, timescale_reason = _suggest_timescale_window(
+            variable, region["key"], today, season_intent, source)
         default_time = True
 
     spec_title = title or _derive_title(region["name"], variable, start, end)
     start, end, cadence = _cadence_for(
         variable, normalized, default_time, start, end, today)
-    source, source_reason = _parse_source(normalized, variable)
     return VizSpec(
         title=spec_title,
         region_key=region["key"],
@@ -1098,4 +1209,5 @@ def parse_description(
         storm_name=storm_name,
         storm_rank=storm_rank,
         storm_top_n=storm_top_n,
+        timescale_reason=timescale_reason,
     )

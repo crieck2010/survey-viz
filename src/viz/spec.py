@@ -182,6 +182,14 @@ class VizSpec:
         caption: optional custom footer caption, prepended to the frame
             footer ahead of the variable/honesty text (``None`` = default
             footer). ``""`` is treated as ``None``.
+        timescale_reason: human-readable reason the parser chose the
+            time window via the **survey-timescales** peer
+            (survey-timescales v0.1.0+) — e.g. ``"aligned to California
+            fire season (May–Oct)"``. ``""`` when the window came from
+            an explicit user time phrase or the peer was unavailable
+            (then the documented past-1-year default applied). Recorded
+            in the frame manifest via ``to_dict`` so the window decision
+            is part of run provenance — never metadata-only.
     """
 
     title: str
@@ -210,6 +218,12 @@ class VizSpec:
     #: to the frame footer so the baseline an anomaly is computed
     #: against is part of the image itself — never metadata-only.
     derived_note: Optional[str] = None
+    #: Provenance for the time-window decision (survey-timescales
+    #: v0.1.0+): the engine's ``reason`` string when the peer suggested
+    #: the window, ``""`` when the window came from an explicit user
+    #: time phrase or the peer was unavailable. Recorded in the frame
+    #: manifest via :meth:`to_dict`.
+    timescale_reason: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not self.title.strip():
@@ -257,6 +271,10 @@ class VizSpec:
             raise TypeError(
                 "VizSpec.source_reason: expected str, got "
                 f"{type(self.source_reason).__name__}")
+        if not isinstance(self.timescale_reason, str):
+            raise TypeError(
+                "VizSpec.timescale_reason: expected str, got "
+                f"{type(self.timescale_reason).__name__}")
         overlays = tuple(str(o).strip().lower() for o in self.overlays or ())
         for ov in overlays:
             if ov not in KNOWN_OVERLAYS:
@@ -334,6 +352,7 @@ class VizSpec:
             "storm_top_n": self.storm_top_n,
             "caption": self.caption,
             "derived_note": self.derived_note,
+            "timescale_reason": self.timescale_reason,
         }
 
     @classmethod
@@ -351,7 +370,8 @@ class VizSpec:
         (pre-v0.15.0) load with ``None`` (default footer); dicts without
         ``"derived_note"`` (pre-v0.19.0) load with ``None``; dicts without
         ``"underlay_topo"`` (pre-v0.20.0) load with ``True`` (dataclass
-        default).
+        default); dicts without ``"timescale_reason"`` (pre-v0.21.0)
+        load with ``""`` (dataclass default).
         """
         if not isinstance(data, dict):
             raise TypeError(f"VizSpec.from_dict: expected dict, got {type(data).__name__}")
