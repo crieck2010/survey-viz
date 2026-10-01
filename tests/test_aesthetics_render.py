@@ -695,3 +695,32 @@ def test_dark_strands_wind_landmask_unavailable_falls_back(tmp_path,
     assert r["mask"] == "land (unavailable — unclipped)"
     assert r["landmask"]["requested"] is True
     assert r["landmask"]["status"] == "unavailable"
+
+
+def test_robust_vmax_ignores_single_extreme_cell():
+    """One extreme speed cell must not crush the brightness scale."""
+    from viz.aesthetic_render import _robust_vmax
+    arr = np.full((100, 100), 5.0)
+    arr[0, 0] = 1000.0  # model gust front / cyclone cell
+    vmax = _robust_vmax(np, arr)
+    assert vmax == pytest.approx(5.0)
+    assert _robust_vmax(np, np.full((4, 4), 0.0)) == 1.0  # degenerate
+
+
+def test_dark_strands_brightness_scale_is_percentile_not_max(tmp_path):
+    """Bivariate brightness vmax is the reel-wide p99, not the raw max."""
+    pytest.importorskip("flow")
+    field = _wind_field()
+    field["grids"]["u10"][0, 0, 0] = 200.0  # extreme cell
+    spec = _spec(variable="wind", title="Winds",
+                 region_key="north-america",
+                 bbox=(-100.0, 30.0, -80.0, 50.0),
+                 start=dt.date(2026, 9, 30), end=dt.date(2026, 10, 1))
+    frames, manifest_path = render_viz(
+        spec, field, None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False, landmask=False)
+    assert frames
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["speed_vmax_percentile"] == 99.0
+    assert r["speed_vmax"] < 200.0
+    assert r["speed_vmax"] > 0

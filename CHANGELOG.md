@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.1] - 2026-10-01
+
+### Fixed
+- Robust bivariate brightness scale: the reel-wide speed vmax is now the
+  99th percentile of speed, not the raw max. A single extreme cell
+  (tropical cyclone, model gust front) previously crushed the whole
+  reel's strand brightness into near-black; values above p99 clip like a
+  colorbar's top end. Same fix applied to the `dark_flow` LIC preset.
+  The percentile is recorded as `speed_vmax_percentile` in the manifest.
+
 ## [0.26.0] - 2026-10-01
 
 ### Added

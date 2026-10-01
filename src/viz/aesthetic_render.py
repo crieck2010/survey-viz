@@ -762,6 +762,23 @@ def _nanminmax(np, *arrays) -> Tuple[float, float]:
     return float(np.min(finite)), float(np.max(finite))
 
 
+def _robust_vmax(np, arr, pct: float = 99.0) -> float:
+    """Reel-wide robust maximum for brightness scales.
+
+    The given percentile of finite values (default p99), not the raw
+    max — a single extreme cell (model gust front, tropical cyclone)
+    must not crush the whole reel's brightness range into black.
+    Values above the percentile clip, exactly like a colorbar's top
+    end; the percentile is recorded in the manifest.
+    """
+    flat = np.asarray(arr, dtype=float).ravel()
+    flat = flat[np.isfinite(flat)]
+    if flat.size == 0:
+        return 1.0
+    vmax = float(np.percentile(flat, pct))
+    return vmax if vmax > 0 else 1.0
+
+
 # ---------------------------------------------------------------------------
 # dark_flow: LIC streaks (currents / wind)
 # ---------------------------------------------------------------------------
@@ -858,7 +875,9 @@ def _render_dark_flow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
     if not vmax > vmin:
         vmax = vmin + 1.0
     _, smax = _nanminmax(np, speed)
-    speed_max = smax if smax > 0 else 1.0
+    # Robust: p99, not the raw max (see _robust_vmax) — one extreme
+    # cell must not crush the LIC brightness range.
+    speed_max = _robust_vmax(np, speed)
 
     _, _, coastline_segs, underlay_status = ctx["underlay_parts"]
     basemap_style = ctx["basemap_style"]
@@ -993,14 +1012,15 @@ def _render_dark_strands(ctx: Dict[str, Any]
     # scalar (the warming.watch convention); strand BRIGHTNESS is the
     # wind/current speed on a REEL-WIDE fixed scale (never per-frame —
     # a per-frame normalization would flicker). _extract_flow already
-    # carries speed = hypot(u, v) over the full (T, ny, nx) stack, so
-    # the min/max over that stack is the reel-wide scale.
+    # carries speed = hypot(u, v) over the full (T, ny, nx) stack. The
+    # scale top is the 99th percentile, not the raw max: a single
+    # extreme cell (tropical cyclone, model gust front) must not crush
+    # the whole reel's brightness into black. vmin is 0 (speed is
+    # non-negative); values above p99 clip like a colorbar's top end.
     bivariate = bool(ctx.get("bivariate", True))
     speed_label = "wind speed" if var == "wind" else "current speed"
-    speed_vmin, speed_vmax = _nanminmax(np, flow["speed"])
-    if not speed_vmax > speed_vmin:
-        speed_vmax = speed_vmin + 1.0
-    speed_vmin = round(float(speed_vmin), 2)
+    speed_vmin = 0.0
+    speed_vmax = _robust_vmax(np, flow["speed"])
     speed_vmax = round(float(speed_vmax), 2)
     if not speed_vmax > speed_vmin:
         speed_vmax = speed_vmin + 1.0
@@ -1163,9 +1183,11 @@ def _render_dark_strands(ctx: Dict[str, Any]
         "scalar": f"{scalar_label} ({scalar_unit})",
         "scalar_name": scalar_name,
         "bivariate": bivariate,
-        # Reel-wide fixed speed scale for the brightness channel (m/s).
+        # Reel-wide fixed speed scale for the brightness channel (m/s):
+        # 99th percentile, not the raw max (see _robust_vmax).
         "speed_vmin": speed_vmin,
         "speed_vmax": speed_vmax,
+        "speed_vmax_percentile": 99.0,
         "strand_count": strand_count,
         "strand_linewidth": strand_lw,
         "strand_seed": _STRAND_SEED,
