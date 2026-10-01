@@ -442,8 +442,91 @@ def test_dark_strands_wind_encoding_names_air_temperature(tmp_path,
                  start=dt.date(2026, 9, 30), end=dt.date(2026, 10, 1))
     frames, manifest_path = render_viz(
         spec, _wind_field(), None, out_dir=tmp_path,
-        preset="dark_strands", underlay=False)
+        preset="dark_strands", underlay=False, landmask=False)
     assert frames, "expected rendered strand frames"
     assert drawn.get("text") == "COLOR = AIR TEMPERATURE"
     r = json.loads(Path(manifest_path).read_text())["render"]
     assert r["encoding"] == "COLOR = AIR TEMPERATURE"
+
+
+def _wind_spec(**over):
+    kw = dict(variable="wind", title="North American Winds",
+              region_key="north-america",
+              bbox=(-100.0, 30.0, -80.0, 50.0),
+              start=dt.date(2026, 9, 30), end=dt.date(2026, 10, 1))
+    kw.update(over)
+    return _spec(**kw)
+
+
+def test_dark_strands_wind_landmask_manifest(tmp_path, monkeypatch):
+    """dark_strands on wind clips to the land mask; the manifest records it."""
+    pytest.importorskip("flow")  # survey-flow peer advects the strands
+    import viz.underlay as _ul
+
+    calls = []
+
+    def fake_landmask(bbox, lats, lons, **kw):
+        calls.append(tuple(bbox))
+        ny = int(np.asarray(lats).ravel().size)
+        nx = int(np.asarray(lons).ravel().size)
+        return {
+            "status": "ok", "reason": "",
+            "mask": np.ones((ny, nx), dtype=bool),
+            "provenance": {"scale": "50m", "n_polygons": 3,
+                           "n_rings": 5, "cache": "Miss"},
+        }
+
+    monkeypatch.setattr(_ul, "fetch_landmask", fake_landmask)
+    frames, manifest_path = render_viz(
+        _wind_spec(), _wind_field(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False)
+    assert frames, "expected rendered strand frames"
+    assert calls == [(-100.0, 30.0, -80.0, 50.0)]
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["mask"] == "land"
+    assert r["landmask"]["requested"] is True
+    assert r["landmask"]["status"] == "ok"
+    assert r["landmask"]["scale"] == "50m"
+    assert r["landmask"]["n_polygons"] == 3
+
+
+def test_dark_strands_wind_landmask_disabled(tmp_path, monkeypatch):
+    """landmask=False: no land fetch attempted, no mask in the manifest."""
+    pytest.importorskip("flow")
+    import viz.underlay as _ul
+
+    def _boom(*a, **k):
+        raise AssertionError("fetch_landmask must not be called")
+
+    monkeypatch.setattr(_ul, "fetch_landmask", _boom)
+    frames, manifest_path = render_viz(
+        _wind_spec(), _wind_field(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False, landmask=False)
+    assert frames, "expected rendered strand frames"
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["mask"] is None
+    assert r["landmask"]["requested"] is False
+    assert r["landmask"]["status"] is None
+
+
+def test_dark_strands_wind_landmask_unavailable_falls_back(tmp_path,
+                                                           monkeypatch):
+    """Land fetch unavailable -> unclipped strands, honestly recorded."""
+    pytest.importorskip("flow")
+    import viz.underlay as _ul
+
+    def fake_unavailable(bbox, lats, lons, **kw):
+        return {"status": "unavailable", "reason": "no network",
+                "mask": None,
+                "provenance": {"scale": "50m", "n_polygons": 0,
+                               "n_rings": 0, "cache": "Miss"}}
+
+    monkeypatch.setattr(_ul, "fetch_landmask", fake_unavailable)
+    frames, manifest_path = render_viz(
+        _wind_spec(), _wind_field(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False)
+    assert frames, "expected rendered strand frames"
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["mask"] == "land (unavailable — unclipped)"
+    assert r["landmask"]["requested"] is True
+    assert r["landmask"]["status"] == "unavailable"

@@ -716,6 +716,7 @@ def render_viz(
     basemap: Optional[str] = None,
     strand_count: int = 3000,
     strand_linewidth: float = 1.4,
+    landmask: bool = True,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -830,7 +831,7 @@ def render_viz(
             cmap=cmap, style=style, place_labels=place_labels,
             max_labels=max_labels, min_population=min_population,
             basemap=basemap, strand_count=strand_count,
-            strand_linewidth=strand_linewidth)
+            strand_linewidth=strand_linewidth, landmask=landmask)
     style = style or spec.style
     if style not in _STYLE:
         raise ValueError(f"Unknown style: {style!r} (expected one of {sorted(_STYLE)})")

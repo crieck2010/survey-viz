@@ -140,7 +140,19 @@ class TestDarkStrandsPreset:
                 out_dir=tmp_path / "f", preset="dark_strands",
                 strand_count=200, underlay=False)
 
-    def test_wind_renders_unclipped(self, tmp_path):
+    def test_wind_clipped_by_land_mask(self, tmp_path, monkeypatch):
+        import numpy as _np
+        import viz.underlay as _ul
+
+        def fake_landmask(bbox, lats, lons, **kw):
+            ny = int(_np.asarray(lats).ravel().size)
+            nx = int(_np.asarray(lons).ravel().size)
+            return {"status": "ok", "reason": "",
+                    "mask": _np.ones((ny, nx), dtype=bool),
+                    "provenance": {"scale": "50m", "n_polygons": 4,
+                                   "n_rings": 6, "cache": "Miss"}}
+
+        monkeypatch.setattr(_ul, "fetch_landmask", fake_landmask)
         spec = _spec(variable="wind")
         frames, manifest = render_preset_viz(
             spec, _FakeWind(), out_dir=tmp_path / "f",
@@ -148,9 +160,24 @@ class TestDarkStrandsPreset:
         import json
         with open(manifest, encoding="utf-8") as fh:
             m = json.load(fh)
-        assert m["render"]["mask"] is None
+        assert m["render"]["mask"] == "land"
+        assert m["render"]["landmask"]["status"] == "ok"
+        assert m["render"]["landmask"]["n_polygons"] == 4
         assert m["render"]["scalar_name"] == "air_temperature"
         assert m["render"]["scalar"].startswith("air temperature")
+        assert frames
+
+    def test_wind_renders_unclipped_when_landmask_disabled(self, tmp_path):
+        spec = _spec(variable="wind")
+        frames, manifest = render_preset_viz(
+            spec, _FakeWind(), out_dir=tmp_path / "f",
+            preset="dark_strands", strand_count=200, underlay=False,
+            landmask=False)
+        import json
+        with open(manifest, encoding="utf-8") as fh:
+            m = json.load(fh)
+        assert m["render"]["mask"] is None
+        assert m["render"]["landmask"]["requested"] is False
         assert frames
 
     def test_non_vector_variable_fails_fast(self, tmp_path):

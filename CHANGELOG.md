@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.2] - 2026-10-01
+
+### Added
+- `viz.underlay.fetch_landmask(bbox, lats, lons, scale=None,
+  timeout=600.0)`: rasterize Natural Earth land polygons to a
+  strand-clip mask. Never raises — returns
+  `{"status": "ok"|"unavailable", "reason", "mask", "provenance"}`;
+  `mask` is a (ny, nx) bool array (True = land = keep strands) with
+  row 0 = north regardless of the input `lats` ordering; exterior
+  rings fill, interior rings (holes) cut out; cached in-process per
+  (rounded bbox, scale, ny, nx). Provenance: scale, n_polygons,
+  n_rings, cache Hit/Miss.
+- `dark_strands` on `wind` now clips strands to the land mask
+  (`landmask=True` default — the continent emerges from the strands,
+  the warming.watch look; `mask_feather=3.0` like the currents ocean
+  mask). The mask is built once per reel and cached; an unavailable
+  land layer falls back to unclipped strands (manifest records
+  `"land (unavailable — unclipped)"`) instead of failing. Pass
+  `landmask=False` (or `--no-landmask` on the CLI) to disable.
+  Manifest `render.mask` is now `"land"` / `"ocean"` /
+  `"land (unavailable — unclipped)"` / None, and `render.landmask`
+  records `{requested, status, scale, n_polygons}`.
+- The wind land mask also feeds the `subtle_land` basemap style, so
+  it now draws a real land fill for wind reels.
+
 ## [0.25.1] - 2026-10-01
 
 ### Fixed

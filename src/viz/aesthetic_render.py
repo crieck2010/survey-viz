@@ -910,7 +910,8 @@ def _render_dark_strands(ctx: Dict[str, Any]
     recombed, deterministic), spin the trails up on that timestep's
     field, and render hair-like strands colored by the scalar at each
     trail head. Reel-wide fixed vmin/vmax; the ocean mask (currents)
-    clips strands so geography emerges with no basemap drawn.
+    or the Natural Earth land mask (wind) clips strands so geography
+    emerges with no basemap drawn.
     """
     ae = ctx["ae"]
     np = _np()
@@ -968,11 +969,17 @@ def _render_dark_strands(ctx: Dict[str, Any]
     if not vmax > vmin:
         vmax = vmin + 1.0
 
-    # Ocean mask for currents (True keeps strands); row 0 = top for the
-    # engine. Wind has no raster landmask in the offline peer set, so it
-    # renders unclipped (documented limit).
+    # Strand clip masks (True keeps strands); row 0 = top for the
+    # engine. Currents infer the ocean from NaNs; wind rasterizes the
+    # Natural Earth land layer once per reel (the grid is frame-static)
+    # so the continent emerges from the strands. A failed land fetch
+    # falls back to unclipped strands — never a render failure.
     ocean_mask = None
     land_mask = None
+    wind_mask = None
+    landmask_requested = bool(ctx.get("landmask", True))
+    landmask_status: Optional[str] = None
+    landmask_prov: Dict[str, Any] = {}
     if spec.variable == "currents":
         water = ~(np.isnan(u[0]) | np.isnan(v[0]))
         if not np.any(water):
@@ -981,6 +988,15 @@ def _render_dark_strands(ctx: Dict[str, Any]
                 "cells in the region — the strand mask is empty")
         ocean_mask = water[::-1, :]  # row 0 = top
         land_mask = (~water)[::-1, :]
+    elif spec.variable == "wind" and landmask_requested:
+        from .underlay import fetch_landmask
+        lm = fetch_landmask(tuple(float(x) for x in spec.bbox),
+                            lats, lons)
+        landmask_status = lm["status"]
+        landmask_prov = lm.get("provenance", {})
+        if lm["status"] == "ok" and lm["mask"] is not None:
+            wind_mask = np.asarray(lm["mask"], dtype=bool)
+            land_mask = wind_mask  # subtle_land basemap can use it too
 
     _, _, coastline_segs, underlay_status = ctx["underlay_parts"]
     basemap_style = ctx["basemap_style"]
@@ -1040,7 +1056,8 @@ def _render_dark_strands(ctx: Dict[str, Any]
             vmin=vmin, vmax=vmax, cmap=cname,
             width_px=1080, height_px=1920,
             linewidth=strand_lw,
-            mask=ocean_mask, mask_feather=3.0,
+            mask=ocean_mask if ocean_mask is not None else wind_mask,
+            mask_feather=3.0,
         )
 
         def draw_map(ax, _rgba=rgba):
@@ -1064,6 +1081,15 @@ def _render_dark_strands(ctx: Dict[str, Any]
         frames.append(str((out / f"frame_{n + 1:04d}.png").resolve()))
         timestamps.append(moment.isoformat())
 
+    if ocean_mask is not None:
+        mask_label: Optional[str] = "ocean"
+    elif wind_mask is not None:
+        mask_label = "land"
+    elif (spec.variable == "wind" and landmask_requested
+          and landmask_status == "unavailable"):
+        mask_label = "land (unavailable — unclipped)"
+    else:
+        mask_label = None
     render_info = {
         "vmin": vmin, "vmax": vmax,
         "scalar": f"{scalar_label} ({scalar_unit})",
@@ -1071,7 +1097,13 @@ def _render_dark_strands(ctx: Dict[str, Any]
         "strand_count": strand_count,
         "strand_linewidth": strand_lw,
         "strand_seed": _STRAND_SEED,
-        "mask": "ocean" if ocean_mask is not None else None,
+        "mask": mask_label,
+        "landmask": {
+            "requested": landmask_requested,
+            "status": landmask_status,  # "ok" | "unavailable" | None
+            "scale": landmask_prov.get("scale"),
+            "n_polygons": landmask_prov.get("n_polygons"),
+        },
         "underlay": underlay_status,
     }
     return frames, timestamps, render_info
@@ -1435,6 +1467,7 @@ def render_preset_viz(
     basemap: Optional[str] = None,
     strand_count: int = _DEFAULT_STRAND_COUNT,
     strand_linewidth: float = _DEFAULT_STRAND_LINEWIDTH,
+    landmask: bool = True,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec through a survey-aesthetics preset.
 
@@ -1483,6 +1516,14 @@ def render_preset_viz(
         strand_linewidth: strand width in points for ``dark_strands``
             (default 1.4; 1–2 reads hair-like at 1080x1920).
             Preset-path only.
+        landmask: clip ``dark_strands`` wind strands to the Natural
+            Earth land polygons (default True — the continent emerges
+            from the strands, the warming.watch look). The mask is
+            rasterized once per reel and cached in-process; when the
+            land layer is unavailable the render falls back to
+            unclipped strands (recorded in the manifest) rather than
+            failing. ``currents`` always uses its NaN-inferred ocean
+            mask. Pass ``False`` to disable clipping.
 
     Returns ``(frames, manifest_path)`` like :func:`viz.render.render_viz`.
     """
@@ -1598,6 +1639,7 @@ def render_preset_viz(
         "basemap_name": basemap_name,
         "strand_count": strand_count,
         "strand_linewidth": strand_linewidth,
+        "landmask": landmask,
         "place_canvas_labels": canvas_labels,
     }
 

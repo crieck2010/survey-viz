@@ -74,8 +74,12 @@ with no basemap drawn — geography emerges from the data itself.
   land in the field), feathered 3 px — with no basemap drawn, the
   lake/coastline shape is drawn by the strands stopping at the shore.
   An all-land field is an honest `ValueError`, not an empty reel.
-  Wind is not masked (there is no offline raster landmask in this
-  stack — see "Honest limits").
+  For `wind` the strands are clipped to the Natural Earth land
+  polygons (rasterized once per reel via `viz.underlay.fetch_landmask`,
+  feathered 3 px) — the continent emerges from the strands, the
+  warming.watch look. Pass `landmask=False` to disable; when the land
+  layer is unavailable the render falls back to unclipped strands and
+  records the fallback in the manifest.
 * Legends: timeline scrubber with mono timestamp, gradient bar with
   min/max, north arrow, the honesty line.
 
@@ -246,11 +250,14 @@ scrubber (dark_flow), cumulative counter + date dial (dark_glow).
   `VectorField`/`ParticleSet`; without it `preset="dark_strands"`
   raises the honest peer-missing error. The other three presets never
   import it.
-* Wind strands are not land-masked: there is no offline raster
-  landmask in this stack, so `no_basemap` + wind draws strands over
-  land as well as sea. Currents are masked by the field's own NaN
-  (land) — which is why the preset requires a current field with a
-  real land mask.
+* Wind strands are clipped to the Natural Earth land polygons
+  (`viz.underlay.fetch_landmask`, 110m/50m by region width, feathered
+  3 px); when the land layer is unavailable the reel falls back to
+  unclipped strands and the manifest records
+  `"land (unavailable — unclipped)"`. `no_basemap` + wind with
+  `landmask=False` draws strands over land as well as sea. Currents
+  are masked by the field's own NaN (land) — which is why the preset
+  requires a current field with a real land mask.
 * Strand cost is ~1–2 s/frame at 3000 particles (12 spinup steps +
   trail rasterization); the 4000-particle reference is ~1.3 s/frame
   on the engine's benchmark.

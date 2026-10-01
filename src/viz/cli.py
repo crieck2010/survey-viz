@@ -135,6 +135,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
             basemap=args.basemap,
             strand_count=args.strand_count,
             strand_linewidth=args.strand_linewidth,
+            landmask=not args.no_landmask,
         )
     except RuntimeError as exc:  # e.g. matplotlib missing
         print(f"error: {exc}", file=sys.stderr)
@@ -220,6 +221,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--strand-linewidth", type=float, default=1.4,
                    help="Strand width in points for the dark_strands "
                         "preset (default 1.4).")
+    r.add_argument("--no-landmask", action="store_true",
+                   help="Do not clip dark_strands wind strands to the "
+                        "Natural Earth land polygons (default: clip).")
     r.set_defaults(func=_cmd_render)
     return parser
 

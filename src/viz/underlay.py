@@ -32,6 +32,9 @@ import numpy as np
 #: Underlay result schema version (recorded in the frame manifest).
 UNDERLAY_SCHEMA = "survey-viz.underlay/1.0"
 
+#: Landmask result schema version (recorded in the frame manifest).
+LANDMASK_SCHEMA = "survey-viz.landmask/1.0"
+
 #: Coarsest grid we will build for the tint: beyond this many cells per
 #: axis the resolution is doubled until it fits.
 _MAX_UNDERLAY_CELLS = 720
@@ -193,3 +196,123 @@ def fetch_underlay(bbox: Tuple[float, float, float, float],
 def clear_cache() -> None:
     """Drop the in-process underlay cache (tests)."""
     _cache.clear()
+
+
+def _fc_to_polygons(fc: Dict[str, Any]
+                    ) -> List[Tuple[List[Tuple[float, float]],
+                                    List[List[Tuple[float, float]]]]]:
+    """GeoJSON Polygon/MultiPolygon -> [(exterior, [holes])]."""
+    polys = []
+    for feat in fc.get("features", []):
+        geom = (feat or {}).get("geometry") or {}
+        gtype = geom.get("type")
+        coords = geom.get("coordinates") or []
+        if gtype == "Polygon":
+            geoms = [coords]
+        elif gtype == "MultiPolygon":
+            geoms = list(coords)
+        else:
+            continue
+        for rings in geoms:
+            if not rings:
+                continue
+            exterior = [(float(p[0]), float(p[1])) for p in rings[0]]
+            holes = [[(float(p[0]), float(p[1])) for p in ring]
+                     for ring in rings[1:]]
+            polys.append((exterior, holes))
+    return polys
+
+
+def fetch_landmask(bbox: Tuple[float, float, float, float],
+                   lats: Any, lons: Any,
+                   scale: Optional[str] = None,
+                   timeout: float = 600.0,
+                   use_cache: bool = True) -> Dict[str, Any]:
+    """Rasterize Natural Earth land polygons to a strand-clip mask.
+
+    Never raises: every failure (missing peer, no network, empty
+    layer, …) returns ``{"status": "unavailable", ...}`` with
+    ``"mask"`` None, and the caller falls back to unclipped strands.
+
+    On ``"ok"``, ``"mask"`` is a ``(ny, nx)`` bool array — True means
+    land (keep the strand) — with **row 0 = north (top)**, the strand
+    engine's convention, regardless of the input ``lats`` ordering
+    (the data convention is row 0 = south). The mask is rasterized
+    once per ``(bbox, scale, ny, nx)`` and cached in-process; polygon
+    exterior rings fill, interior rings (holes) cut out.
+
+    Antimeridian-crossing bboxes are not supported (Natural Earth
+    polygons are split at ±180°).
+    """
+    lon_min, lat_min, lon_max, lat_max = (float(bbox[0]), float(bbox[1]),
+                                          float(bbox[2]), float(bbox[3]))
+    lats = np.asarray(lats, dtype=float).ravel()
+    lons = np.asarray(lons, dtype=float).ravel()
+    ny, nx = int(lats.size), int(lons.size)
+    eff_scale = scale or _coastline_scale(
+        (lon_min, lat_min, lon_max, lat_max))
+    key = ("landmask", round(lon_min, 3), round(lat_min, 3),
+           round(lon_max, 3), round(lat_max, 3), eff_scale, ny, nx)
+    if use_cache and key in _cache:
+        hit = dict(_cache[key])
+        hit["provenance"] = dict(hit["provenance"], cache="Hit")
+        return hit
+
+    def _unavailable_land(reason: str) -> Dict[str, Any]:
+        return {
+            "schema": LANDMASK_SCHEMA,
+            "status": "unavailable",
+            "reason": str(reason)[:300],
+            "mask": None,
+            "provenance": {"scale": eff_scale, "n_polygons": 0,
+                           "n_rings": 0, "cache": "Miss"},
+        }
+
+    try:
+        from currents.basemaps import fetch_naturalearth
+    except ImportError as exc:
+        return _unavailable_land(
+            "survey-currents>=0.10.0 (currents.basemaps) is not installed; "
+            f"landmask disabled ({exc})")
+
+    try:
+        from matplotlib.path import Path
+        collections = fetch_naturalearth(
+            (lon_min, lat_min, lon_max, lat_max),
+            scale=eff_scale, layers=("land",), timeout=timeout)
+        polys = _fc_to_polygons(collections.get("land", {}))
+        if not polys:
+            return _unavailable_land(
+                "Natural Earth 'land' layer returned no polygons "
+                "for the bbox")
+        glons, glats = np.meshgrid(lons, lats)
+        pts = np.column_stack([glons.ravel(), glats.ravel()])
+        keep = np.zeros(pts.shape[0], dtype=bool)
+        n_rings = 0
+        for exterior, holes in polys:
+            n_rings += 1 + len(holes)
+            inside = Path(exterior).contains_points(pts)
+            for hole in holes:
+                inside &= ~Path(hole).contains_points(pts)
+            keep |= inside
+        mask = keep.reshape(ny, nx)
+        if lats[0] < lats[-1]:
+            # Data convention: row 0 = south. The strand engine wants
+            # row 0 = north (top).
+            mask = mask[::-1, :]
+        result = {
+            "schema": LANDMASK_SCHEMA,
+            "status": "ok",
+            "reason": "",
+            "mask": mask,
+            "provenance": {"scale": eff_scale,
+                           "n_polygons": len(polys),
+                           "n_rings": n_rings,
+                           "cache": "Miss"},
+        }
+    except Exception as exc:  # never crash the render
+        return _unavailable_land(f"{type(exc).__name__}: {exc}")
+
+    if use_cache:
+        _cache[key] = result
+    return result
