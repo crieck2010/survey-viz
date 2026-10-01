@@ -688,6 +688,24 @@ class _Furniture:
         ae.gradient_bar(ax, r, self._ctx["cmap"], vmin, vmax,
                         label=label, unit=unit, color=self._colors())
 
+    def draw_brightness_note(self, ax, text):
+        """Bivariate legend note for dark_strands (placement documented).
+
+        Drawn centered directly UNDER the gradient bar (inside the bar's
+        obstacle extension, so place_labels avoids it): the bar itself
+        shows the color channel (temperature, with its vmin/vmax ticks)
+        and this line names the brightness channel plus its reel-wide
+        fixed scale, e.g. ``BRIGHTNESS = WIND SPEED (0.00–12.40 M/S)``.
+        """
+        ae = self._ctx["ae"]
+        r = self._rect("gradient_bar")
+        if r is None or not text:
+            return
+        x, y, w, _h = r
+        ax.text(x + w / 2, y - 0.030, text, transform=ax.transAxes,
+                fontsize=15, color=self._colors(), alpha=0.9, ha="center",
+                va="top", zorder=10)
+
     def draw_timeline(self, ax, t_start, t_end, t_now):
         ae = self._ctx["ae"]
         r = self._rect("timeline")
@@ -909,7 +927,9 @@ def _render_dark_strands(ctx: Dict[str, Any]
     Per data timestep: seed ``strand_count`` particles (fixed seed —
     recombed, deterministic), spin the trails up on that timestep's
     field, and render hair-like strands colored by the scalar at each
-    trail head. Reel-wide fixed vmin/vmax; the ocean mask (currents)
+    trail head. With ``bivariate=True`` (default) the strands are also
+    brightness-encoded by wind/current speed on a reel-wide fixed
+    scale. Reel-wide fixed vmin/vmax; the ocean mask (currents)
     or the Natural Earth land mask (wind) clips strands so geography
     emerges with no basemap drawn.
     """
@@ -969,6 +989,22 @@ def _render_dark_strands(ctx: Dict[str, Any]
     if not vmax > vmin:
         vmax = vmin + 1.0
 
+    # Bivariate strand encoding: strand COLOR stays the temperature
+    # scalar (the warming.watch convention); strand BRIGHTNESS is the
+    # wind/current speed on a REEL-WIDE fixed scale (never per-frame —
+    # a per-frame normalization would flicker). _extract_flow already
+    # carries speed = hypot(u, v) over the full (T, ny, nx) stack, so
+    # the min/max over that stack is the reel-wide scale.
+    bivariate = bool(ctx.get("bivariate", True))
+    speed_label = "wind speed" if var == "wind" else "current speed"
+    speed_vmin, speed_vmax = _nanminmax(np, flow["speed"])
+    if not speed_vmax > speed_vmin:
+        speed_vmax = speed_vmin + 1.0
+    speed_vmin = round(float(speed_vmin), 2)
+    speed_vmax = round(float(speed_vmax), 2)
+    if not speed_vmax > speed_vmin:
+        speed_vmax = speed_vmin + 1.0
+
     # Strand clip masks (True keeps strands); row 0 = top for the
     # engine. Currents infer the ocean from NaNs; wind rasterizes the
     # Natural Earth land layer once per reel (the grid is frame-static)
@@ -1003,7 +1039,11 @@ def _render_dark_strands(ctx: Dict[str, Any]
     subtitle = ctx["subtitle"]
     rw, rh = ctx["render_size"]
     bbox = tuple(float(x) for x in spec.bbox)
-    ctx["encoding"] = f"COLOR = {scalar_label.upper()}"
+    if bivariate:
+        ctx["encoding"] = (f"COLOR = {scalar_label.upper()}, "
+                           f"BRIGHTNESS = {speed_label.upper()}")
+    else:
+        ctx["encoding"] = f"COLOR = {scalar_label.upper()}"
 
     # Furniture placed once per reel (static boxes; contents vary).
     ctx["furniture"] = furn = _Furniture(ctx)
@@ -1051,6 +1091,26 @@ def _render_dark_strands(ctx: Dict[str, Any]
             head_lats.append(float(s[-1][1][1]))
         head_vals = vf.sample_scalar(np.asarray(head_lons),
                                      np.asarray(head_lats))
+        # Bivariate channel: speed at the same trail heads, on the
+        # reel-wide fixed scale -> per-trail (n,) brightness in [0, 1].
+        # NaN samples (head off-grid) become gain 0, i.e. those strands
+        # fade out. bivariate=False passes NO brightness kwarg at all:
+        # the engine then renders the exact old flat look.
+        strand_kwargs: Dict[str, Any] = {}
+        if bivariate:
+            vf_speed = fields_mod.VectorField(
+                np.asarray(u[i], dtype=float),
+                np.asarray(v[i], dtype=float),
+                np.asarray(lats, dtype=float),
+                np.asarray(lons, dtype=float),
+                scalar=np.asarray(flow["speed"][i], dtype=float),
+                scalar_name="speed",
+            )
+            speed_head = vf_speed.sample_scalar(np.asarray(head_lons),
+                                                np.asarray(head_lats))
+            gain = (speed_head - speed_vmin) / (speed_vmax - speed_vmin)
+            gain = np.where(np.isfinite(gain), gain, 0.0)
+            strand_kwargs["brightness"] = np.clip(gain, 0.0, 1.0)
         rgba = ae.render_strands(
             trails, head_vals,
             vmin=vmin, vmax=vmax, cmap=cname,
@@ -1058,6 +1118,7 @@ def _render_dark_strands(ctx: Dict[str, Any]
             linewidth=strand_lw,
             mask=ocean_mask if ocean_mask is not None else wind_mask,
             mask_feather=3.0,
+            **strand_kwargs,
         )
 
         def draw_map(ax, _rgba=rgba):
@@ -1073,6 +1134,13 @@ def _render_dark_strands(ctx: Dict[str, Any]
                                moments[frame_idx[-1]], _moment)
             furn.draw_gradient_bar(ax, vmin, vmax, scalar_label,
                                    scalar_unit)
+            if bivariate:
+                # The bar shows the color channel (temperature); this
+                # line names the brightness channel and its reel-wide
+                # fixed m/s scale so the second encoding is inspectable.
+                furn.draw_brightness_note(
+                    ax, f"BRIGHTNESS = {speed_label.upper()} "
+                        f"({speed_vmin:g}\u2013{speed_vmax:g} M/S)")
             furn.draw_north_arrow(ax)
             furn.draw_encoding(ax)
             ctx["draw_furniture_common"](ax)
@@ -1094,6 +1162,10 @@ def _render_dark_strands(ctx: Dict[str, Any]
         "vmin": vmin, "vmax": vmax,
         "scalar": f"{scalar_label} ({scalar_unit})",
         "scalar_name": scalar_name,
+        "bivariate": bivariate,
+        # Reel-wide fixed speed scale for the brightness channel (m/s).
+        "speed_vmin": speed_vmin,
+        "speed_vmax": speed_vmax,
         "strand_count": strand_count,
         "strand_linewidth": strand_lw,
         "strand_seed": _STRAND_SEED,
@@ -1468,6 +1540,7 @@ def render_preset_viz(
     strand_count: int = _DEFAULT_STRAND_COUNT,
     strand_linewidth: float = _DEFAULT_STRAND_LINEWIDTH,
     landmask: bool = True,
+    bivariate: bool = True,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec through a survey-aesthetics preset.
 
@@ -1524,6 +1597,12 @@ def render_preset_viz(
             unclipped strands (recorded in the manifest) rather than
             failing. ``currents`` always uses its NaN-inferred ocean
             mask. Pass ``False`` to disable clipping.
+        bivariate: ``dark_strands`` strand encoding (default True):
+            COLOR = temperature, BRIGHTNESS = wind/current speed on a
+            reel-wide fixed m/s scale (recorded in the manifest as
+            ``speed_vmin``/``speed_vmax``). ``False`` restores the
+            single-variable flat look (no brightness channel, old
+            encoding line). Preset-path only.
 
     Returns ``(frames, manifest_path)`` like :func:`viz.render.render_viz`.
     """
@@ -1542,13 +1621,18 @@ def render_preset_viz(
     preset_obj = ae.get_preset(preset)
     # The dark_strands preset's honesty line names air temperature (the
     # warming.watch wind look); on currents the strands show water
-    # temperature — say so.
+    # temperature — say so. With bivariate=True the strands are also
+    # brightness-encoded by speed, which the line states too.
     encoding = preset_obj.encoding
     if preset == "dark_strands":
+        speed_name = ("WIND SPEED" if spec.variable == "wind"
+                      else "CURRENT SPEED")
         if spec.variable == "currents":
             encoding = "COLOR = WATER TEMPERATURE"
         elif spec.variable == "wind":
             encoding = "COLOR = AIR TEMPERATURE"
+        if bivariate:
+            encoding += f", BRIGHTNESS = {speed_name}"
 
     from .render import _fetch_underlay_once, _require_plotting, _validate_cmap
     plt, _, np = _require_plotting()
@@ -1640,6 +1724,7 @@ def render_preset_viz(
         "strand_count": strand_count,
         "strand_linewidth": strand_linewidth,
         "landmask": landmask,
+        "bivariate": bivariate,
         "place_canvas_labels": canvas_labels,
     }
 
@@ -1675,6 +1760,7 @@ def render_preset_viz(
             "basemap": basemap_name,
             "strand_count": strand_count,
             "strand_linewidth": strand_linewidth,
+            "bivariate": bivariate,
             "furniture": {
                 kind: {"rect": list(p.rect), "placed": bool(p.placed),
                        "scale": float(p.scale)}

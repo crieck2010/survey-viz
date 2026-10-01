@@ -109,6 +109,20 @@ pass ``(bbox, start, end)`` positionally, with keyword args
 ``min_magnitude=...`` (float, minimum reported magnitude),
 ``event_type=...`` (``None`` for all types, or e.g. ``"earthquake"``),
 ``page_size=...`` and ``cache_dir=...``.
+Note: the ``"ofs-thredds"`` adapter is
+``currents.ofs_thredds.fetch_ofs_thredds`` —
+``fetch_for_source("ofs-thredds")`` returns the raw callable and
+callers pass ``(ofs_code, bbox, start, end)`` positionally, with
+keyword args ``cadence_hours=...`` (default 6), ``prefer=...``
+(``"nowcast"``/``"forecast"``, default ``"nowcast"``) and
+``timeout=...``. ``ofs_code`` is pinned EXPLICITLY by the caller —
+each OFS model covers a fixed coastal region, so there is no honest
+global default; ``"SSCOFS"`` is the model verified live against
+CO-OPS THREDDS and is the documented example. The field comes back
+CurrentField-compatible (u/v in m/s, temperature in degC,
+land→NaN) and feeds the ``currents`` render path unchanged. THREDDS
+retention is ~31 days — older windows raise honestly instead of
+silently padding.
 """
 
 from __future__ import annotations
@@ -149,6 +163,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "oceancolor": "NOAA CoastWatch Ocean Color (MODIS Aqua R2022 L3)",
     "comcat": "USGS Earthquake Catalog (ComCat)",
     "gfs-wind": "NOAA GFS 10m winds (NOMADS), keyless",
+    "ofs-thredds": "NOAA OFS surface currents (CO-OPS THREDDS), keyless",
 }
 
 #: source -> (module, attribute) inside the survey-currents peer,
@@ -171,6 +186,7 @@ _SOURCE_ADAPTERS: Dict[str, tuple] = {
     "oceancolor": ("currents.oceancolor", "fetch_oceancolor"),
     "comcat": ("currents.earthquakes", "fetch_earthquakes"),
     "gfs-wind": ("currents.gfs_wind", "fetch_gfs_wind"),
+    "ofs-thredds": ("currents.ofs_thredds", "fetch_ofs_thredds"),
 }
 
 #: Minimum survey-currents version providing each adapter (used for the
@@ -193,6 +209,7 @@ _SOURCE_MIN_VERSIONS: Dict[str, str] = {
     "oceancolor": "0.14.0",
     "comcat": "0.15.0",
     "gfs-wind": "0.16.0",
+    "ofs-thredds": "0.18.0",
 }
 
 #: Variables whose regional default source is ERA5 (any region).

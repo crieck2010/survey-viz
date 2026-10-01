@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-10-01
+
+### Added
+- Bivariate `dark_strands` encoding (default): strand COLOR stays the
+  temperature scalar (the warming.watch convention) while strand
+  BRIGHTNESS now encodes wind/current speed, via the
+  survey-aesthetics 0.3.0 `brightness` channel of `render_strands`
+  (per-trail (n,) gain in [0,1] sampled at the trail heads, NaN-safe).
+  The speed scale is REEL-WIDE fixed (min/max over all frames' speed
+  grids — never per-frame, so nothing flickers) and is recorded in the
+  manifest as `render.speed_vmin` / `render.speed_vmax` in m/s, with
+  `render.bivariate` = true. Honesty line becomes two-channel:
+  `COLOR = AIR TEMPERATURE, BRIGHTNESS = WIND SPEED` on wind,
+  `COLOR = WATER TEMPERATURE, BRIGHTNESS = CURRENT SPEED` on currents.
+  A `BRIGHTNESS = ... (vmin–vmax M/S)` note is drawn under the gradient
+  bar (inside its label-obstacle zone) so both channels are inspectable
+  on the frame.
+- New `bivariate: bool = True` kwarg on `render_preset_viz` and
+  `render_viz` (preset path), plus the `--bivariate` / `--no-bivariate`
+  CLI flags (`viz render`). `bivariate=False` restores the exact old
+  flat look: no `brightness` kwarg is passed to the engine and the old
+  single-variable honesty line is drawn.
+- New fetch source `"ofs-thredds"`: NOAA OFS surface currents via the
+  keyless CO-OPS THREDDS OPeNDAP subsetting adapter from
+  survey-currents 0.18.0 (`currents.ofs_thredds.fetch_ofs_thredds`).
+  Registered in `KNOWN_SOURCES`, `SOURCE_LABELS` ("NOAA OFS surface
+  currents (CO-OPS THREDDS), keyless"), the `_SOURCE_ADAPTERS`
+  lazy-import table, and `_SOURCE_MIN_VERSIONS` ("0.18.0", with the
+  honest upgrade message). `VizSpec(source="ofs-thredds")` validates.
+  The returned field is CurrentField-compatible (u/v in m/s,
+  temperature in degC, land→NaN) and feeds the `currents` render path —
+  including `dark_strands` — unchanged.
+- `ofs-thredds` call convention (documented in `viz.sources`):
+  `fetch_for_source("ofs-thredds")` returns the raw adapter; callers
+  pass `(ofs_code, bbox, start, end)` positionally, with keyword args
+  `cadence_hours` (default 6), `prefer` (`"nowcast"`/`"forecast"`) and
+  `timeout`. The OFS model code is pinned EXPLICITLY — each OFS model
+  covers a fixed coastal region, so there is no silent global default
+  (`"SSCOFS"` is the documented, live-verified example).
+
+### Changed
+- survey-aesthetics dependency pin raised to v0.3.0 (the `brightness`
+  channel did not exist in v0.2.0).
+
+### Limitations (honest)
+- The brightness gain multiplies the head→tail alpha ramp, so dim
+  trails' tails fade doubly fast relative to the flat look (tails are
+  dropped at gain 0). This is the engine's documented behavior.
+- The speed scale is reel-wide fixed: a reel with one extreme frame
+  compresses the brightness range of the rest. This is the anti-flicker
+  trade, stated in the docstring.
+- THREDDS ~31-day retention is inherited from the adapter: windows
+  older than that raise honestly instead of silently padding.
+
 ## [0.25.2] - 2026-10-01
 
 ### Added

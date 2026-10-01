@@ -717,6 +717,7 @@ def render_viz(
     strand_count: int = 3000,
     strand_linewidth: float = 1.4,
     landmask: bool = True,
+    bivariate: bool = True,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -772,8 +773,9 @@ def render_viz(
     degrees), ``watermark`` (brand handle, ``None`` = off),
     ``subtitle`` (explicit editorial subtitle), ``encoding_line``
     (the preset's honesty line, default True), ``place_labels``,
-    ``max_labels``, and ``min_population`` require ``preset`` — they
-    fail fast without it. ``story_captions`` and ``canvas`` are legacy-
+    ``max_labels``, ``min_population``, ``bivariate`` (dark_strands
+    brightness-by-speed encoding, default True) require ``preset`` —
+    they fail fast without it. ``story_captions`` and ``canvas`` are legacy-
     path features and fail fast with a preset (the preset has its own
     editorial system and layout grammar).
 
@@ -804,13 +806,13 @@ def render_viz(
         # meaning on the preset path. (place_labels=False and the
         # default True are no-ops on the legacy renderer.)
         or (isinstance(place_labels, (list, tuple)) and len(place_labels) > 0)
-        or max_labels != 8 or min_population != 0)
+        or max_labels != 8 or min_population != 0 or bivariate is not True)
     if preset_requested:
         if preset is None:
             raise ValueError(
                 "rotation/watermark/subtitle/encoding_line/basemap/"
                 "strand_count/strand_linewidth/place_labels/"
-                "max_labels/min_population need "
+                "max_labels/min_population/bivariate need "
                 "preset='dark_flow'/'dark_glow'/'paper_prism'/'dark_strands' "
                 "— they are preset-path options with no meaning on the "
                 "legacy renderer")
@@ -831,7 +833,8 @@ def render_viz(
             cmap=cmap, style=style, place_labels=place_labels,
             max_labels=max_labels, min_population=min_population,
             basemap=basemap, strand_count=strand_count,
-            strand_linewidth=strand_linewidth, landmask=landmask)
+            strand_linewidth=strand_linewidth, landmask=landmask,
+            bivariate=bivariate)
     style = style or spec.style
     if style not in _STYLE:
         raise ValueError(f"Unknown style: {style!r} (expected one of {sorted(_STYLE)})")

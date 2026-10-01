@@ -402,3 +402,62 @@ def test_gfs_wind_spec_source_validates():
     spec = _spec(region_key="north-america", variable="wind",
                  bbox=(-130.0, 25.0, -65.0, 50.0), source="gfs-wind")
     assert spec.source == "gfs-wind"
+
+
+def test_ofs_thredds_source_registered():
+    # survey-viz 0.26.0: the keyless NOAA OFS THREDDS source is a known,
+    # explicitly-pinnable source; the currents default stays oscar.
+    assert "ofs-thredds" in KNOWN_SOURCES
+    assert (SOURCE_LABELS["ofs-thredds"]
+            == "NOAA OFS surface currents (CO-OPS THREDDS), keyless")
+    assert resolve_source(_spec(source="ofs-thredds")) == "ofs-thredds"
+    assert resolve_source(_spec(source="", variable="currents")) == "oscar"
+
+
+def test_ofs_thredds_spec_source_validates():
+    spec = _spec(region_key="north-atlantic", variable="currents",
+                 bbox=(-74.0, 38.0, -73.0, 39.0), source="ofs-thredds")
+    assert spec.source == "ofs-thredds"
+
+
+def test_ofs_thredds_min_version_pin():
+    # The honest upgrade message names survey-currents>=0.18.0.
+    from viz.sources import _SOURCE_MIN_VERSIONS
+    assert _SOURCE_MIN_VERSIONS["ofs-thredds"] == "0.18.0"
+
+
+def test_ofs_thredds_fetch_adapter_wire(monkeypatch):
+    """fetch_for_source("ofs-thredds") returns the THREDDS adapter with
+    its own call convention: the caller pins the OFS model code FIRST
+    (explicit pin — no silent global default), then (bbox, start, end).
+    No network: the currents.ofs_thredds module is faked in sys.modules.
+    """
+    import sys
+    import types
+
+    mod = types.ModuleType("currents.ofs_thredds")
+    calls = {}
+
+    def fake_fetch(ofs_code, bbox, start, end, **kw):
+        calls.update(ofs_code=ofs_code, bbox=bbox, start=start, end=end,
+                     kw=kw)
+        return "FIELD"
+
+    mod.fetch_ofs_thredds = fake_fetch
+    monkeypatch.setitem(sys.modules, "currents.ofs_thredds", mod)
+
+    fetch = fetch_for_source("ofs-thredds")
+    bbox = (-74.0, 38.0, -73.0, 39.0)
+    out = fetch("SSCOFS", bbox, "2026-09-30", "2026-10-01",
+                cadence_hours=6)
+    assert out == "FIELD"
+    assert calls["ofs_code"] == "SSCOFS"
+    assert calls["bbox"] == bbox
+    assert calls["start"] == "2026-09-30"
+    assert calls["end"] == "2026-10-01"
+    assert calls["kw"]["cadence_hours"] == 6
+
+
+def test_ofs_thredds_unknown_source_still_refused():
+    with pytest.raises(ValueError, match="unknown source"):
+        fetch_for_source("ofs-thredds-typo")

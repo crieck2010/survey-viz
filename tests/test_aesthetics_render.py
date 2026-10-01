@@ -424,8 +424,10 @@ def test_dark_strands_wind_encoding_names_air_temperature(tmp_path,
 
     The strands are colored by 2 m air temperature (the warming.watch
     convention); an earlier build drew 'COLOR = WIND SPEED' while the
-    legend said AIR TEMPERATURE. Assert both the drawn line (via a spy on
-    the aesthetics helper) and the manifest agree.
+    legend said AIR TEMPERATURE. With bivariate=True (the default) the
+    line is two-channel: COLOR = AIR TEMPERATURE, BRIGHTNESS = WIND
+    SPEED. Assert both the drawn line (via a spy on the aesthetics
+    helper) and the manifest agree.
     """
     pytest.importorskip("flow")  # survey-flow peer advects the strands
     import aesthetics
@@ -444,9 +446,172 @@ def test_dark_strands_wind_encoding_names_air_temperature(tmp_path,
         spec, _wind_field(), None, out_dir=tmp_path,
         preset="dark_strands", underlay=False, landmask=False)
     assert frames, "expected rendered strand frames"
+    assert (drawn.get("text")
+            == "COLOR = AIR TEMPERATURE, BRIGHTNESS = WIND SPEED")
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert (r["encoding"]
+            == "COLOR = AIR TEMPERATURE, BRIGHTNESS = WIND SPEED")
+
+
+def test_dark_strands_wind_encoding_flat_when_bivariate_false(
+        tmp_path, monkeypatch):
+    """bivariate=False restores the exact old single-variable look.
+
+    No brightness channel is encoded: the honesty line is the old
+    single-variable line and the manifest records bivariate=False.
+    """
+    pytest.importorskip("flow")  # survey-flow peer advects the strands
+    import aesthetics
+
+    drawn = {}
+
+    def spy(ax, x, y, text, **kw):
+        drawn["text"] = text
+
+    monkeypatch.setattr(aesthetics, "encoding_statement", spy)
+    spec = _spec(variable="wind", title="North American Winds",
+                 region_key="north-america",
+                 bbox=(-100.0, 30.0, -80.0, 50.0),
+                 start=dt.date(2026, 9, 30), end=dt.date(2026, 10, 1))
+    frames, manifest_path = render_viz(
+        spec, _wind_field(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False, landmask=False,
+        bivariate=False)
+    assert frames, "expected rendered strand frames"
     assert drawn.get("text") == "COLOR = AIR TEMPERATURE"
     r = json.loads(Path(manifest_path).read_text())["render"]
     assert r["encoding"] == "COLOR = AIR TEMPERATURE"
+    assert r["bivariate"] is False
+
+
+def test_dark_strands_bivariate_manifest_records_speed_scale(tmp_path):
+    """Bivariate: the manifest carries the reel-wide fixed speed scale.
+
+    speed_vmin/speed_vmax are the brightness channel's scale in m/s
+    (never per-frame — that would flicker) and bivariate=True.
+    """
+    pytest.importorskip("flow")
+    spec = _wind_spec()
+    frames, manifest_path = render_viz(
+        spec, _wind_field(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False, landmask=False,
+        strand_count=100)
+    assert frames, "expected rendered strand frames"
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["bivariate"] is True
+    smin, smax = r["speed_vmin"], r["speed_vmax"]
+    assert 0.0 <= smin < smax  # speeds are non-negative magnitudes
+    assert smax - smin < 1e9  # finite scale
+
+
+def test_dark_strands_brightness_reaches_engine(tmp_path, monkeypatch):
+    """Bivariate: a per-trail (n,) brightness in [0,1] reaches render_strands.
+
+    Sampled at the trail heads, on the reel-wide fixed speed scale.
+    """
+    pytest.importorskip("flow")
+    import aesthetics
+
+    seen = {}
+
+    def spy(trails, values, **kw):
+        seen["kwargs"] = kw
+        seen["n_trails"] = len(trails)
+        # Return a real RGBA array so the frame pipeline keeps working.
+        return np.zeros((1920, 1080, 4), dtype=np.uint8)
+
+    monkeypatch.setattr(aesthetics, "render_strands", spy)
+    frames, _ = render_viz(
+        _wind_spec(), _wind_field(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False, landmask=False,
+        strand_count=100)
+    assert frames, "expected rendered strand frames"
+    kw = seen["kwargs"]
+    assert "brightness" in kw, "bivariate must pass brightness to the engine"
+    b = np.asarray(kw["brightness"], dtype=float)
+    assert b.shape == (seen["n_trails"],)  # per-trail (n,)
+    assert np.all(np.isfinite(b))
+    assert b.min() >= 0.0 and b.max() <= 1.0
+
+
+def test_dark_strands_flat_omits_brightness_kwarg(tmp_path, monkeypatch):
+    """bivariate=False: NO brightness kwarg is passed to the engine.
+
+    The engine renders the exact old flat look (brightness off: gain
+    1.0 everywhere).
+    """
+    pytest.importorskip("flow")
+    import aesthetics
+
+    seen = {}
+
+    def spy(trails, values, **kw):
+        seen["kwargs"] = kw
+        return np.zeros((1920, 1080, 4), dtype=np.uint8)
+
+    monkeypatch.setattr(aesthetics, "render_strands", spy)
+    frames, _ = render_viz(
+        _wind_spec(), _wind_field(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False, landmask=False,
+        strand_count=100, bivariate=False)
+    assert frames, "expected rendered strand frames"
+    assert "brightness" not in seen["kwargs"]
+
+
+def test_dark_strands_currents_bivariate_encoding(tmp_path, monkeypatch):
+    """dark_strands on currents: COLOR = WATER TEMPERATURE, BRIGHTNESS =
+    CURRENT SPEED (OFS-THREDDS-shaped field: u/v m/s, temperature °C,
+    land→NaN)."""
+    pytest.importorskip("flow")
+    import aesthetics
+
+    drawn = {}
+
+    def spy(ax, x, y, text, **kw):
+        drawn["text"] = text
+
+    monkeypatch.setattr(aesthetics, "encoding_statement", spy)
+    spec = _spec(variable="currents", region_key="lake-superior")
+    frames, manifest_path = render_viz(
+        spec, _FakeCurrents(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False, strand_count=100)
+    assert frames, "expected rendered strand frames"
+    assert (drawn.get("text")
+            == "COLOR = WATER TEMPERATURE, BRIGHTNESS = CURRENT SPEED")
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert (r["encoding"]
+            == "COLOR = WATER TEMPERATURE, BRIGHTNESS = CURRENT SPEED")
+    assert r["bivariate"] is True
+    assert 0.0 <= r["speed_vmin"] < r["speed_vmax"]
+
+
+def test_dark_strands_brightness_note_under_gradient_bar(tmp_path,
+                                                         monkeypatch):
+    """Bivariate: the BRIGHTNESS legend note is drawn under the gradient bar.
+
+    The note names the brightness channel and its reel-wide fixed m/s
+    scale so the second encoding is inspectable on the frame.
+    """
+    pytest.importorskip("flow")
+    from matplotlib.axes import Axes
+
+    notes = []
+    orig_text = Axes.text
+
+    def spy_text(self, x, y, s, **kw):
+        if isinstance(s, str) and s.startswith("BRIGHTNESS ="):
+            notes.append(s)
+        return orig_text(self, x, y, s, **kw)
+
+    monkeypatch.setattr(Axes, "text", spy_text)
+    frames, _ = render_viz(
+        _wind_spec(), _wind_field(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False, landmask=False,
+        strand_count=100, place_labels=False)
+    assert frames, "expected rendered strand frames"
+    assert notes, "expected a BRIGHTNESS legend note under the bar"
+    assert notes[0].startswith("BRIGHTNESS = WIND SPEED (")
+    assert "M/S" in notes[0]
 
 
 def _wind_spec(**over):

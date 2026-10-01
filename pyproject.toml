@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "survey-viz"
-version = "0.25.2"
+version = "0.26.0"
 description = "Plain-English descriptions to vertical map frame sequences: deterministic parser, spec, and offline renderer."
 readme = "README.md"
 license = { text = "MIT" }
@@ -33,7 +33,7 @@ timescales = ["survey-timescales>=0.1.0"]
 # command when a requested peer is absent — the legacy renderer never
 # touches either). Both pinned to their GitHub releases (not on PyPI).
 aesthetics = [
-  "survey-aesthetics @ git+https://github.com/crieck2010/survey-aesthetics@v0.2.0",
+  "survey-aesthetics @ git+https://github.com/crieck2010/survey-aesthetics@v0.3.0",
   "survey-gazetteer @ git+https://github.com/crieck2010/survey-gazetteer@v0.1.0",
   "survey-flow @ git+https://github.com/crieck2010/survey-flow@v0.1.0",
 ]

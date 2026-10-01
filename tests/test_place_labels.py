@@ -279,6 +279,25 @@ def test_cli_flag_overrides():
          "--place-labels"])
     assert args.place_labels is True
 
+
+def test_cli_bivariate_flag_defaults():
+    from viz.cli import build_parser
+    args = build_parser().parse_args(
+        ["render", "--spec", "s.json", "--field-npz", "f.npz"])
+    assert args.bivariate is True
+
+
+def test_cli_bivariate_flag_overrides():
+    from viz.cli import build_parser
+    args = build_parser().parse_args(
+        ["render", "--spec", "s.json", "--field-npz", "f.npz",
+         "--preset", "dark_strands", "--no-bivariate"])
+    assert args.bivariate is False
+    args = build_parser().parse_args(
+        ["render", "--spec", "s.json", "--field-npz", "f.npz",
+         "--preset", "dark_strands", "--bivariate"])
+    assert args.bivariate is True
+
 def test_northup_frac_to_final_frac_matches_engine():
     """Empirical check: a bright marker at a known north-up fraction,
     rotated by the real engine, lands where the transform predicts."""
