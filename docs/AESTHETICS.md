@@ -87,6 +87,45 @@ would rotate its burned-in titles too) and fails fast without one.
 brand bottom-right, © line, data-source line bottom-left, and the
 encoding honesty line centered above them.
 
+## Place labels
+
+`place_labels=True` (default when a preset is active) auto-fetches up
+to `max_labels` (default 8, `min_population` default 0) places for the
+reel's north-up bbox from the **survey-gazetteer** peer engine (Natural
+Earth 1:10m populated places, stdlib-only, deterministic). The fetch
+happens ONCE per reel and the same labels ride every frame; they are
+drawn upright with the rest of the furniture on the final canvas,
+after rotation, via the engine's `place_labels` — which owns the final
+on-canvas decluttering (greedy, priority-ordered; labels that fit
+nowhere are dropped, never overlapping furniture).
+
+```python
+frames, manifest = render_viz(
+    spec, field, None, out_dir="frames", preset="paper_prism",
+    place_labels=True,      # auto via survey-gazetteer (default)
+    max_labels=6,           # fewer, larger places
+    min_population=50000,
+)
+# or explicit labels (win over auto, used verbatim):
+frames, manifest = render_viz(
+    spec, field, None, out_dir="frames", preset="paper_prism",
+    place_labels=[{"x": -87.9, "y": 43.0, "text": "Milwaukee",
+                   "priority": 10}],
+)
+# or off:
+frames, manifest = render_viz(
+    spec, field, None, out_dir="frames", preset="paper_prism",
+    place_labels=False,
+)
+```
+
+Explicit label dicts need numeric `x`/`y` (lon/lat degrees), a
+non-empty string `text`, and must be JSON-serializable — they land
+verbatim in the frame manifest, which is what the survey-cache
+fingerprint hashes. `place_labels`/`max_labels`/`min_population` are
+preset-path options and fail fast without `preset` (like
+`rotation`/`watermark`/`subtitle`).
+
 ## Custom legends
 
 Each preset draws its own legends instead of the default colorbar:
@@ -96,14 +135,21 @@ scrubber (dark_flow), cumulative counter + date dial (dark_glow).
 
 ## Interop
 
-* The peer is optional: `pip install 'survey-viz[aesthetics]'`
-  (pinned to the GitHub release — the package is not on PyPI).
-  Without it, `preset=...` raises a `RuntimeError` with the install
-  command; the legacy renderer never imports the peer.
+* The peers are optional: `pip install 'survey-viz[aesthetics]'`
+  (pinned to the GitHub releases — the packages are not on PyPI).
+  Without survey-aesthetics, `preset=...` raises a `RuntimeError` with
+  the install command; without survey-gazetteer, `place_labels=True`
+  (the preset-path default) raises the same kind of honest error, and
+  `place_labels=False` / explicit lists never import the peer. The
+  legacy renderer never imports either peer.
 * The manifest keeps the `survey-viz.frame-manifest/1.0` schema and
   records `preset`, `rotation_deg`, `watermark`, `subtitle`,
-  `vmin`/`vmax`/`speed_max`, and the combined engine string, so
-  survey-animate and survey-cache treat preset renders like any other.
+  `vmin`/`vmax`/`speed_max`, the combined engine string, and a
+  `place_labels` block (`mode` auto/explicit/off, `max_labels`,
+  `min_population`, `kinds`, gazetteer version, and the
+  JSON-serializable label dicts), so survey-animate and survey-cache
+  treat preset renders like any other — and the cache fingerprint can
+  hash the label inputs.
 * `story_captions` and `canvas` (platform safe zones) are legacy-path
   features and fail fast with a preset — the preset has its own
   editorial system and layout grammar.
@@ -122,7 +168,10 @@ scrubber (dark_flow), cumulative counter + date dial (dark_glow).
 * The engine's glow blur is designed for dense gridded energy: sparse
   events are splatted as disks first (see above), so dot size is fixed
   in pixels rather than data-scaled.
-* No automatic place labels yet — the reference reels' city dots need
-  a label gazetteer this repo does not have (future work).
+* Automatic place labels come from the survey-gazetteer peer's
+  Natural Earth 1:10m populated places (cities/towns only — no
+  physical features, admin regions, or POIs); empty regions simply get
+  no labels. The engine's greedy decluttering drops labels that cannot
+  fit without overlap.
 * Prism tick labels are exact data fractions (e.g. 15.375), not snapped
   to round numbers — precise, not pretty.

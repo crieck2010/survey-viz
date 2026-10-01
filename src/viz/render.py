@@ -710,6 +710,9 @@ def render_viz(
     watermark: Optional[str] = None,
     subtitle: Optional[str] = None,
     encoding_line: bool = True,
+    place_labels: Any = True,
+    max_labels: int = 8,
+    min_population: int = 0,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -763,11 +766,23 @@ def render_viz(
     ``None`` (default) keeps the legacy renderer, byte-identical to
     <= 0.21. The preset-path options ``rotation`` (``None``/``"auto"``/
     degrees), ``watermark`` (brand handle, ``None`` = off),
-    ``subtitle`` (explicit editorial subtitle), and ``encoding_line``
-    (the preset's honesty line, default True) require ``preset`` — they
+    ``subtitle`` (explicit editorial subtitle), ``encoding_line``
+    (the preset's honesty line, default True), ``place_labels``,
+    ``max_labels``, and ``min_population`` require ``preset`` — they
     fail fast without it. ``story_captions`` and ``canvas`` are legacy-
     path features and fail fast with a preset (the preset has its own
     editorial system and layout grammar).
+
+    ``place_labels`` controls geographic place labels on the preset
+    path (see :mod:`viz.aesthetic_render` and the survey-gazetteer
+    peer): ``True`` (default) auto-fetches up to ``max_labels`` places
+    (population >= ``min_population``) for the reel's north-up bbox,
+    once per reel; ``False`` draws no labels; an explicit list of
+    label dicts (``{"x": lon, "y": lat, "text": str,
+    "priority": int}``) is used verbatim and wins over the automatic
+    set. Labels are drawn upright with the rest of the furniture after
+    rotation, and are recorded (JSON-serializable) in the frame
+    manifest for the survey-cache fingerprint.
     """
     if layout != "reel-vertical":
         raise ValueError(f"Unknown layout: {layout!r} (only 'reel-vertical' in v0.1.0)")
@@ -779,11 +794,17 @@ def render_viz(
     preset_requested = (
         preset is not None or rotation is not None
         or watermark is not None or subtitle is not None
-        or encoding_line is not True)
+        or encoding_line is not True
+        # An explicit label list, or non-default label tuning, only has
+        # meaning on the preset path. (place_labels=False and the
+        # default True are no-ops on the legacy renderer.)
+        or (isinstance(place_labels, (list, tuple)) and len(place_labels) > 0)
+        or max_labels != 8 or min_population != 0)
     if preset_requested:
         if preset is None:
             raise ValueError(
-                "rotation/watermark/subtitle/encoding_line need "
+                "rotation/watermark/subtitle/encoding_line/place_labels/"
+                "max_labels/min_population need "
                 "preset='dark_flow'/'dark_glow'/'paper_prism' — they are "
                 "preset-path options with no meaning on the legacy renderer")
         if story_captions:
@@ -800,7 +821,8 @@ def render_viz(
             spec, field, out_dir, preset=preset, rotation=rotation,
             watermark=watermark, subtitle=subtitle,
             encoding_line=encoding_line, underlay=want_underlay,
-            cmap=cmap, style=style)
+            cmap=cmap, style=style, place_labels=place_labels,
+            max_labels=max_labels, min_population=min_population)
     style = style or spec.style
     if style not in _STYLE:
         raise ValueError(f"Unknown style: {style!r} (expected one of {sorted(_STYLE)})")

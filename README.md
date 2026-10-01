@@ -20,8 +20,9 @@ imports, never hard dependencies.
 ```bash
 pip install survey-viz            # parser + spec + gazetteer (stdlib + pyyaml)
 pip install "survey-viz[render]"  # + numpy/matplotlib for rendering
-pip install "survey-viz[aesthetics]"  # + the survey-aesthetics peer engine
-                                      # (mapped.earth preset path; GitHub release)
+pip install "survey-viz[aesthetics]"  # + the survey-aesthetics + survey-gazetteer
+                                      # peer engines (mapped.earth preset path +
+                                      # place labels; GitHub releases)
 ```
 
 Or from source:
@@ -149,6 +150,9 @@ frames, manifest = render_viz(
     preset="dark_flow",       # or "dark_glow" / "paper_prism"
     rotation="auto",          # optimal frame rotation for the region bbox
     watermark="your_handle",  # opt-in brand furniture (off by default)
+    place_labels=True,        # auto place labels via the survey-gazetteer
+                              # peer (default); False = off, or pass an
+                              # explicit [{"x": lon, "y": lat, "text": ...}]
 )
 ```
 

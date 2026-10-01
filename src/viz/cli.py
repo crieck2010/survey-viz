@@ -129,6 +129,9 @@ def _cmd_render(args: argparse.Namespace) -> int:
             preset=args.preset, rotation=args.rotation,
             watermark=args.watermark, subtitle=args.subtitle,
             encoding_line=not args.no_encoding_line,
+            place_labels=args.place_labels,
+            max_labels=args.max_labels,
+            min_population=args.min_population,
         )
     except RuntimeError as exc:  # e.g. matplotlib missing
         print(f"error: {exc}", file=sys.stderr)
@@ -192,6 +195,17 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-encoding-line", action="store_true",
                    help="Hide the preset's honesty line "
                         "(e.g. 'BRIGHTNESS = SPEED').")
+    r.add_argument("--place-labels", "--no-place-labels",
+                   dest="place_labels",
+                   action=argparse.BooleanOptionalAction, default=True,
+                   help="Place geographic labels on the preset path "
+                        "(default: auto via the survey-gazetteer peer; "
+                        "--no-place-labels turns them off).")
+    r.add_argument("--max-labels", type=int, default=8,
+                   help="Cap for automatic place labels (default 8).")
+    r.add_argument("--min-population", type=int, default=0,
+                   help="Minimum place population for automatic place "
+                        "labels (default 0).")
     r.set_defaults(func=_cmd_render)
     return parser
 

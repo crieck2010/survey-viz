@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-09-30
+
+### Added
+- **Place labels on the aesthetic preset path** via the
+  **survey-gazetteer** peer engine (new peer in the
+  `pip install "survey-viz[aesthetics]"` extra, pinned to the GitHub
+  release): `render_viz(..., preset=..., place_labels=...)` with
+  - `True` (default when a preset is active) — auto-fetches place
+    labels for the reel's north-up bbox from the gazetteer (Natural
+    Earth 1:10m populated places, cities/towns), ONCE per reel and
+    reused across frames;
+  - `False` — no labels (the peer is never imported);
+  - an explicit list of `{"x": lon, "y": lat, "text", "priority"}`
+    dicts — used verbatim, wins over auto, validated
+    (numeric x/y, non-empty text, JSON-serializable for the manifest).
+- New tunables `max_labels` (default 8) and `min_population`
+  (default 0), plumbed through CLI flags `--place-labels` /
+  `--no-place-labels`, `--max-labels`, `--min-population`. All three
+  are preset-path options and fail fast without `preset` (same rule as
+  `rotation`/`watermark`/`subtitle`); the legacy `preset=None` path is
+  byte-identical.
+- Labels are drawn upright with the rest of the furniture on the final
+  canvas, after rotation: lon/lat dicts are projected onto final-canvas
+  fractions through the engine's own rotation transform (replicated
+  exactly and verified empirically against `rotate_frame_fill`), so
+  labels stay registered to the geography they name. Final on-canvas
+  decluttering stays in the engine's `place_labels` (greedy,
+  priority-ordered; crowded labels are dropped, never overlapping).
+- The frame manifest records a `place_labels` block (`mode`
+  auto/explicit/off, `max_labels`, `min_population`, `kinds`, gazetteer
+  version, and the JSON-serializable label dicts) — exactly what the
+  survey-cache frame-batch fingerprint hashes.
+- The gazetteer peer stays optional with an honest error: labels
+  requested without it raise `RuntimeError` naming
+  `pip install 'survey-viz[aesthetics]'`; the legacy renderer never
+  touches it.
+
 ## [0.22.0] - 2026-09-30
 
 ### Added

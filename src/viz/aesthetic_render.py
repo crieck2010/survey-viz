@@ -135,6 +135,169 @@ def _aesthetics_version() -> str:
         return "not-installed"
 
 
+def _gazetteer():
+    """Import the survey-gazetteer peer (lazy, with an honest error).
+
+    Mirrors :func:`_engine`: the peer stays optional — the legacy
+    renderer and the label-free preset path never touch it.
+    """
+    try:
+        import gazetteer as gz
+    except ImportError as exc:
+        raise RuntimeError(
+            "render_viz(place_labels=...) needs the survey-gazetteer peer "
+            "engine, which is not installed. Install it with: "
+            "pip install 'survey-viz[aesthetics]'"
+        ) from exc
+    return gz
+
+
+def _gazetteer_version() -> str:
+    try:
+        gz = _gazetteer()
+        return str(getattr(gz, "__version__", "unknown"))
+    except RuntimeError:
+        return "not-installed"
+
+
+# Default place kinds for automatic labels (the gazetteer's own default).
+_LABEL_KINDS = ("city", "town")
+
+
+def _resolve_place_labels(place_labels: Any, spec,
+                          max_labels: int, min_population: int) -> Tuple[List[Dict[str, Any]], str]:
+    """Resolve the reel's place labels ONCE (never per frame).
+
+    Returns ``(label_dicts, mode)`` where each dict is
+    ``{"x": lon, "y": lat, "text": str, "priority": int}`` and ``mode``
+    is ``"auto"`` / ``"explicit"`` / ``"off"``.
+
+    - ``True`` (the default when a preset is active): auto-fetch from
+      the survey-gazetteer peer for the spec's north-up bbox.
+    - ``False``: no labels (the peer is never imported).
+    - a list/tuple of label dicts: used verbatim — explicit labels win
+      over automatic ones, so they are never merged with auto results.
+      Each dict needs numeric ``x``/``y`` and a string ``text`` and
+      must be JSON-serializable (it lands in the frame manifest, which
+      is what the survey-cache fingerprint hashes).
+    """
+    if place_labels is False:
+        return [], "off"
+    if isinstance(place_labels, (list, tuple)):
+        out: List[Dict[str, Any]] = []
+        for i, lb in enumerate(place_labels):
+            if not isinstance(lb, dict):
+                raise ValueError(
+                    f"place_labels[{i}]: expected a label dict, got {lb!r}")
+            try:
+                x, y = float(lb["x"]), float(lb["y"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(
+                    f"place_labels[{i}]: needs numeric 'x'/'y', got {lb!r}"
+                ) from None
+            text = lb.get("text")
+            if not isinstance(text, str) or not text:
+                raise ValueError(
+                    f"place_labels[{i}]: needs a non-empty string 'text', "
+                    f"got {lb!r}")
+            import json as _json
+            try:
+                _json.dumps(lb)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"place_labels[{i}]: must be JSON-serializable for the "
+                    f"manifest/fingerprint, got {lb!r}: {exc}") from None
+            out.append(dict(lb))
+        return out, "explicit"
+    if place_labels is not True:
+        raise ValueError(
+            f"place_labels: expected True/False or a list of label dicts, "
+            f"got {place_labels!r}")
+    if not isinstance(max_labels, int) or isinstance(max_labels, bool) \
+            or max_labels < 0:
+        raise ValueError(
+            f"max_labels: expected a non-negative int, got {max_labels!r}")
+    if not isinstance(min_population, int) or isinstance(min_population, bool) \
+            or min_population < 0:
+        raise ValueError(
+            f"min_population: expected a non-negative int, got "
+            f"{min_population!r}")
+    gz = _gazetteer()
+    lon0, lat0, lon1, lat1 = (float(v) for v in spec.bbox)
+    labels = gz.labels_for_bbox(
+        lon0, lon1, lat0, lat1,
+        max_labels=max_labels, min_population=min_population,
+        kinds=_LABEL_KINDS)
+    return [dict(lb) for lb in labels], "auto"
+
+
+def _northup_frac_to_final_frac(fx: float, fy: float,
+                                rw: int, rh: int,
+                                angle_deg: float) -> Tuple[float, float]:
+    """Project a north-up map fraction point onto the final canvas.
+
+    The preset path renders the north-up map on a ``(rw, rh)`` canvas
+    whose data coordinates are axes fractions in [0, 1] (y up), then
+    rotates it with the engine's ``rotate_frame_fill`` (PIL
+    ``rotate(angle, expand=True)`` + center crop to 1080x1920) and
+    draws the furniture — including place labels — on the final
+    canvas, upright. This replicates the engine's pixel transform
+    exactly (verified against ``rotate_frame_fill`` in the test
+    suite): labels stay registered to the geography they name.
+    """
+    if not angle_deg:
+        return fx, fy
+    import math
+    theta = math.radians(angle_deg)
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+    w, h = float(rw), float(rh)
+    # Expanded canvas size, exactly as PIL's Image.rotate(expand=True)
+    # computes it: bounding box of the rotated source corners.
+    corners = ((0.0, 0.0), (w, 0.0), (w, h), (0.0, h))
+    xs = [cos_t * x - sin_t * y for x, y in corners]
+    ys = [sin_t * x + cos_t * y for x, y in corners]
+    nw = math.ceil(max(xs)) - math.floor(min(xs))
+    nh = math.ceil(max(ys)) - math.floor(min(ys))
+    # Forward map: north-up pixel -> expanded-canvas pixel. The data
+    # point (fx, fy) (y up) is pixel (fx*w, (1-fy)*h) (y down); the
+    # rotation is center-preserving, so the expanded center is
+    # (nw/2, nh/2).
+    px, py = fx * w, (1.0 - fy) * h
+    dx = cos_t * (px - w / 2.0) + sin_t * (py - h / 2.0) + nw / 2.0
+    dy = -sin_t * (px - w / 2.0) + cos_t * (py - h / 2.0) + nh / 2.0
+    # Center crop to the final canvas (mirrors rotate_frame_fill).
+    left = (nw - _CANVAS_W) // 2
+    top = (nh - _CANVAS_H) // 2
+    qx, qy = dx - left, dy - top
+    return qx / _CANVAS_W, 1.0 - qy / _CANVAS_H
+
+
+def _project_labels_to_final(label_dicts: List[Dict[str, Any]],
+                             bbox: Tuple[float, ...],
+                             angle: float,
+                             render_size: Tuple[int, int]) -> List[Dict[str, Any]]:
+    """Convert lon/lat label dicts to final furniture-canvas fractions.
+
+    The gazetteer returns ``x``/``y`` in degrees on the north-up map;
+    the engine's ``place_labels`` reads data coordinates of the canvas
+    it draws on — the final (possibly rotated) furniture canvas, whose
+    data coordinates are axes fractions. Called once per reel: the
+    bbox, angle, and canvas are reel-static, so the projection is
+    identical for every frame.
+    """
+    lon0, lat0, lon1, lat1 = (float(v) for v in bbox)
+    rw, rh = render_size
+    out: List[Dict[str, Any]] = []
+    for lb in label_dicts:
+        fx = (float(lb["x"]) - lon0) / (lon1 - lon0)
+        fy = (float(lb["y"]) - lat0) / (lat1 - lat0)
+        dx, dy = _northup_frac_to_final_frac(fx, fy, rw, rh, angle)
+        placed = dict(lb)
+        placed["x"], placed["y"] = dx, dy
+        out.append(placed)
+    return out
+
+
 def _viz_version() -> str:
     try:
         from importlib.metadata import PackageNotFoundError, version
@@ -784,6 +947,9 @@ def render_preset_viz(
     underlay: bool = True,
     cmap: Optional[str] = None,
     style: Optional[str] = None,
+    place_labels: Any = True,
+    max_labels: int = 8,
+    min_population: int = 0,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec through a survey-aesthetics preset.
 
@@ -806,6 +972,19 @@ def render_preset_viz(
         cmap: override the preset's curated colormap (validated; the
             preset default is kept when None).
         style: recorded in the manifest; the preset's background wins.
+        place_labels: ``True`` (default) auto-fetches place labels for
+            the reel's north-up bbox from the survey-gazetteer peer —
+            ONCE per reel, reused across frames; ``False`` draws no
+            labels (the peer is never imported); an explicit list of
+            label dicts (``{"x": lon, "y": lat, "text": str,
+            "priority": int}``) is used verbatim and wins over the
+            automatic set. Labels are drawn with the rest of the
+            furniture on the final canvas, upright, after rotation;
+            final on-canvas decluttering stays in the engine's
+            ``place_labels``.
+        max_labels: cap for automatic labels (default 8).
+        min_population: minimum place population for automatic labels
+            (default 0).
 
     Returns ``(frames, manifest_path)`` like :func:`viz.render.render_viz`.
     """
@@ -836,6 +1015,14 @@ def render_preset_viz(
     subtitle_text = subtitle.strip() if isinstance(subtitle, str) and subtitle.strip() \
         else _window_subtitle(spec)
 
+    # Place labels: resolved ONCE per reel from the north-up bbox, then
+    # projected onto the final furniture-canvas fractions (upright after
+    # rotation). Reel-static, so the same list rides every frame.
+    label_dicts, label_mode = _resolve_place_labels(
+        place_labels, spec, max_labels, min_population)
+    canvas_labels = _project_labels_to_final(
+        label_dicts, spec.bbox, angle, render_size)
+
     # Shared furniture tail: watermark block (opt-in) + encoding honesty line.
     # Each preset renderer may override ctx["encoding"] (dark_glow does).
     data_source = _data_source_label(spec, field)
@@ -854,6 +1041,12 @@ def render_preset_viz(
                 data_source=data_source,
                 encoding=enc if encoding_line else None,
                 color=preset_obj.text_color)
+        if ctx["place_canvas_labels"]:
+            # Geographic labels, upright on the final canvas; the
+            # engine's greedy decluttering drops what cannot fit.
+            ae.place_labels(ax, ctx["place_canvas_labels"],
+                            color=preset_obj.text_color,
+                            dot_color=preset_obj.text_color)
 
     ctx: Dict[str, Any] = {
         "ae": ae, "spec": spec, "field": field, "preset": preset_obj,
@@ -862,6 +1055,7 @@ def render_preset_viz(
         "underlay_parts": underlay_parts,
         "draw_furniture_common": draw_furniture_common,
         "encoding": preset_obj.encoding,
+        "place_canvas_labels": canvas_labels,
     }
 
     if preset == "dark_flow":
@@ -891,6 +1085,17 @@ def render_preset_viz(
             "subtitle": subtitle_text,
             "encoding_line": encoding_line,
             "n_frames": len(frames),
+            "place_labels": {
+                "mode": label_mode,  # "auto" | "explicit" | "off"
+                "max_labels": max_labels,
+                "min_population": min_population,
+                "kinds": list(_LABEL_KINDS),
+                "gazetteer": _gazetteer_version(),
+                "n_labels": len(label_dicts),
+                # lon/lat label dicts (JSON-serializable): exactly what
+                # the survey-cache frame-batch fingerprint hashes.
+                "labels": label_dicts,
+            },
             "engine": (f"survey-viz {_viz_version()} + "
                        f"survey-aesthetics {_aesthetics_version()}"),
             "created": _dt.datetime.now(_dt.timezone.utc).isoformat(),
