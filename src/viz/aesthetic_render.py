@@ -115,6 +115,7 @@ def _engine():
         **{k: getattr(ae, k) for k in dir(ae) if not k.startswith("_")})
     ns.draw_north_arrow = _north_arrow
     ns.close = _close
+    ns.__version__ = str(getattr(ae, "__version__", "unknown"))
     return ns
 
 
