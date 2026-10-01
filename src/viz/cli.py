@@ -195,7 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-encoding-line", action="store_true",
                    help="Hide the preset's honesty line "
                         "(e.g. 'BRIGHTNESS = SPEED').")
-    r.add_argument("--place-labels", "--no-place-labels",
+    r.add_argument("--place-labels",
                    dest="place_labels",
                    action=argparse.BooleanOptionalAction, default=True,
                    help="Place geographic labels on the preset path "
