@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.1] - 2026-10-01
+
+### Fixed
+- `dark_strands` on `wind`: the drawn honesty line said
+  `COLOR = WIND SPEED` while the strands are colored by 2 m air
+  temperature and the legend says `AIR TEMPERATURE`. The renderer now
+  uses the wind branch's corrected scalar label, so both the drawn line
+  and the manifest's `render.encoding` read
+  `COLOR = AIR TEMPERATURE` (currents still read
+  `COLOR = WATER TEMPERATURE`). Regression test
+  `test_dark_strands_wind_encoding_names_air_temperature` spies the
+  drawn line and asserts the manifest agrees.
+- `render.json` / `manifest.json` `render` block now records the
+  `encoding` text (previously only `encoding_line`), so the durable
+  manifest states the rendered encoding claim.
+
 ## [0.25.0] - 2026-10-01
 
 ### Added

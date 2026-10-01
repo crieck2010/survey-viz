@@ -987,7 +987,7 @@ def _render_dark_strands(ctx: Dict[str, Any]
     subtitle = ctx["subtitle"]
     rw, rh = ctx["render_size"]
     bbox = tuple(float(x) for x in spec.bbox)
-    ctx["encoding"] = f"COLOR = {flow['scalar_label'].upper()}"
+    ctx["encoding"] = f"COLOR = {scalar_label.upper()}"
 
     # Furniture placed once per reel (static boxes; contents vary).
     ctx["furniture"] = furn = _Furniture(ctx)
@@ -1503,8 +1503,11 @@ def render_preset_viz(
     # warming.watch wind look); on currents the strands show water
     # temperature — say so.
     encoding = preset_obj.encoding
-    if preset == "dark_strands" and spec.variable == "currents":
-        encoding = "COLOR = WATER TEMPERATURE"
+    if preset == "dark_strands":
+        if spec.variable == "currents":
+            encoding = "COLOR = WATER TEMPERATURE"
+        elif spec.variable == "wind":
+            encoding = "COLOR = AIR TEMPERATURE"
 
     from .render import _fetch_underlay_once, _require_plotting, _validate_cmap
     plt, _, np = _require_plotting()
@@ -1625,6 +1628,7 @@ def render_preset_viz(
             "rotation_deg": angle,
             "watermark": watermark,
             "subtitle": subtitle_text,
+            "encoding": encoding,
             "encoding_line": encoding_line,
             "basemap": basemap_name,
             "strand_count": strand_count,

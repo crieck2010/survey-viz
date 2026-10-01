@@ -395,3 +395,55 @@ def test_encoding_line_toggle(tmp_path):
         preset="paper_prism", encoding_line=False, underlay=False)
     r = json.loads(Path(manifest_path).read_text())["render"]
     assert r["encoding_line"] is False
+
+
+def _wind_field(n_days=2, ny=8, nx=10, seed=21):
+    """GFS-wind-shaped dict: u10/v10 grids + 2 m air temperature (°F)."""
+    rng = np.random.default_rng(seed)
+    lats = np.linspace(30.0, 50.0, ny)
+    lons = np.linspace(-100.0, -80.0, nx)
+    times = [dt.date(2026, 9, 30) + dt.timedelta(days=d)
+             for d in range(n_days)]
+    shape = (n_days, ny, nx)
+    return {
+        "times": times,
+        "lats": lats,
+        "lons": lons,
+        "grids": {
+            "u10": rng.normal(0, 5, shape),
+            "v10": rng.normal(0, 5, shape),
+        },
+        "air_temperature": rng.normal(60, 15, shape),
+        "temperature_unit": "°F",
+    }
+
+
+def test_dark_strands_wind_encoding_names_air_temperature(tmp_path,
+                                                         monkeypatch):
+    """Regression: the wind-strand honesty line must say AIR TEMPERATURE.
+
+    The strands are colored by 2 m air temperature (the warming.watch
+    convention); an earlier build drew 'COLOR = WIND SPEED' while the
+    legend said AIR TEMPERATURE. Assert both the drawn line (via a spy on
+    the aesthetics helper) and the manifest agree.
+    """
+    pytest.importorskip("flow")  # survey-flow peer advects the strands
+    import aesthetics
+
+    drawn = {}
+
+    def spy(ax, x, y, text, **kw):
+        drawn["text"] = text
+
+    monkeypatch.setattr(aesthetics, "encoding_statement", spy)
+    spec = _spec(variable="wind", title="North American Winds",
+                 region_key="north-america",
+                 bbox=(-100.0, 30.0, -80.0, 50.0),
+                 start=dt.date(2026, 9, 30), end=dt.date(2026, 10, 1))
+    frames, manifest_path = render_viz(
+        spec, _wind_field(), None, out_dir=tmp_path,
+        preset="dark_strands", underlay=False)
+    assert frames, "expected rendered strand frames"
+    assert drawn.get("text") == "COLOR = AIR TEMPERATURE"
+    r = json.loads(Path(manifest_path).read_text())["render"]
+    assert r["encoding"] == "COLOR = AIR TEMPERATURE"
