@@ -133,10 +133,13 @@ def test_package_exports():
         assert hasattr(viz, name)
     # __version__ comes from installed distribution metadata, which is
     # written from pyproject.toml at install time — compare against the
-    # declared version so this test cannot go stale.
+    # declared version so this test cannot go stale. Skipped when the
+    # package isn't installed (dev checkout without `pip install`).
     import tomllib
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
     declared = tomllib.load(open(pyproject, "rb"))["project"]["version"]
+    if viz.__version__ == "0.0.0+unknown":
+        pytest.skip("survey-viz not installed; version check needs install")
     assert viz.__version__ == declared
 
 

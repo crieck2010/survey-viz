@@ -144,12 +144,16 @@ attempted. Uploads work too: `suggest_aesthetic(image_bytes)`.
 from viz import render_viz
 
 # LIC flow streaks on black (currents/wind), event glow (quakes/storms),
-# or 3D prism extrusion on paper (gridded variables like precipitation).
+# 3D prism extrusion on paper (gridded variables like precipitation),
+# or advected particle strands on black (currents/wind).
 frames, manifest = render_viz(
     spec, field, None, out_dir="frames",
-    preset="dark_flow",       # or "dark_glow" / "paper_prism"
+    preset="dark_flow",       # or "dark_glow" / "paper_prism" / "dark_strands"
     rotation="auto",          # optimal frame rotation for the region bbox
     watermark="your_handle",  # opt-in brand furniture (off by default)
+    basemap="void_black",     # or "no_basemap" / "subtle_land" (None = preset default)
+    strand_count=3000,        # dark_strands only: particles per frame
+    strand_linewidth=1.4,     # dark_strands only: strand width in points
     place_labels=True,        # auto place labels via the survey-gazetteer
                               # peer (default); False = off, or pass an
                               # explicit [{"x": lon, "y": lat, "text": ...}]
@@ -158,7 +162,8 @@ frames, manifest = render_viz(
 
 The preset path renders through the survey-aesthetics engine:
 chrome-free full-bleed frames, serif titles with a time-window
-subtitle, custom legends (timeline scrubber, gradient bar, cumulative
+subtitle, collision-aware furniture layout (no overlapping legends),
+custom legends (timeline scrubber, gradient bar, cumulative
 counter, date dial, vertical scale bar), fixed reel-wide color scales
 (no flicker), and an explicit statement of what is encoded
 ("BRIGHTNESS = SPEED"). `preset=None` (default) keeps the legacy

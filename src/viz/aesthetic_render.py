@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 #: Preset names accepted by ``render_viz(preset=...)``.
-AESTHETIC_PRESETS = ("dark_flow", "dark_glow", "paper_prism")
+AESTHETIC_PRESETS = ("dark_flow", "dark_glow", "paper_prism", "dark_strands")
 
 #: Variables each preset can render. ``None`` means "any continuous
 #: gridded variable" (the paper_prism case — height = value works for
@@ -57,7 +57,12 @@ PRESET_VARIABLES: Dict[str, Optional[Tuple[str, ...]]] = {
     "dark_flow": ("currents", "wind"),
     "dark_glow": ("earthquakes", "storm-tracks"),
     "paper_prism": None,
+    "dark_strands": ("currents", "wind"),
 }
+
+#: Basemap styles accepted by ``render_viz(basemap=...)``. ``None``
+#: keeps the preset's bundled default.
+BASEMAP_STYLES = ("void_black", "no_basemap", "subtle_land")
 
 #: Fixed LIC noise seed per reel (the engine rule: a fixed seed keeps
 #: the streak texture identical across frames).
@@ -92,12 +97,11 @@ _CANVAS_W, _CANVAS_H = 1080, 1920
 def _engine():
     """Import the survey-aesthetics peer (lazy, with an honest error).
 
-    Returns a namespace over the engine's public surface. Two functions
-    the engine's own docs/API.md promises — ``draw_north_arrow`` and
-    ``close`` — are missing from the v0.1.0 top-level namespace (they
-    exist in ``aesthetics.typography`` / ``aesthetics.backgrounds``);
-    they are resolved from the submodules here so call sites use one
-    namespace. The engine release itself is never modified.
+    Returns a namespace over the engine's public surface. Names the
+    engine's docs promise but that are missing from the installed
+    top-level namespace are resolved from submodules here so call
+    sites use one namespace. The engine release itself is never
+    modified.
     """
     import types
 
@@ -105,6 +109,7 @@ def _engine():
         import aesthetics as ae
         from aesthetics.backgrounds import close as _close
         from aesthetics.typography import draw_north_arrow as _north_arrow
+        from aesthetics.typography import letterspace as _letterspace
     except ImportError as exc:
         raise RuntimeError(
             "render_viz(preset=...) needs the survey-aesthetics peer "
@@ -115,6 +120,10 @@ def _engine():
         **{k: getattr(ae, k) for k in dir(ae) if not k.startswith("_")})
     ns.draw_north_arrow = _north_arrow
     ns.close = _close
+    # letterspace is submodule-only; needed to measure the subtitle the
+    # same way draw_subtitle renders it (upper + thin-spaced).
+    if not hasattr(ns, "letterspace"):
+        ns.letterspace = _letterspace
     ns.__version__ = str(getattr(ae, "__version__", "unknown"))
     return ns
 
@@ -160,8 +169,43 @@ def _gazetteer_version() -> str:
         return "not-installed"
 
 
+def _flow():
+    """Import the survey-flow peer (lazy, with an honest error).
+
+    Mirrors :func:`_engine`: the peer stays optional — only the
+    ``dark_strands`` preset touches it.
+    """
+    try:
+        from flow import advect as _advect
+        from flow import fields as _fields
+    except ImportError as exc:
+        raise RuntimeError(
+            "render_viz(preset='dark_strands') needs the survey-flow peer "
+            "engine, which is not installed. Install it with: "
+            "pip install 'survey-viz[aesthetics]'"
+        ) from exc
+    return _advect, _fields
+
+
+def _flow_version() -> str:
+    try:
+        advect, _ = _flow()
+        return str(getattr(advect, "__version__", "unknown"))
+    except RuntimeError:
+        return "not-installed"
+
+
 # Default place kinds for automatic labels (the gazetteer's own default).
 _LABEL_KINDS = ("city", "town")
+
+#: Strand advection tuning (fixed per reel — a varying seed shimmers).
+_STRAND_SEED = 7
+_STRAND_TRAIL_LENGTH = 12
+_STRAND_SPINUP_STEPS = 12
+_STRAND_DT_SECONDS = 3600.0
+#: Default strand count (the engine's cost note: ~1.3 s/frame at 4000).
+_DEFAULT_STRAND_COUNT = 3000
+_DEFAULT_STRAND_LINEWIDTH = 1.4
 
 
 def _resolve_place_labels(place_labels: Any, spec,
@@ -413,6 +457,271 @@ def _draw_coastlines_frac(ax, segments: List[Dict[str, Any]],
                 solid_capstyle="round", solid_joinstyle="round")
 
 
+def _draw_basemap_frac(ax, ae, segments: List[Dict[str, Any]],
+                       bbox: Tuple[float, ...],
+                       style: Any,
+                       land_mask: Any = None) -> None:
+    """Styled basemap on the preset path, in axes-fraction space.
+
+    The engine's :func:`draw_basemap` plots segments in the axes' data
+    transform; the chrome-free preset canvases use axes-fraction
+    coordinates in [0, 1], so lon/lat segments are projected to
+    fractions first (data == fraction on these axes).
+    ``land_mask`` is a 2D bool array, row 0 = top, ``True`` = land
+    (only used by styles with a land fill, e.g. ``subtle_land``).
+    """
+    np = _np()
+    frac_segs = []
+    for seg in segments or []:
+        if isinstance(seg, dict):
+            lons, lats = seg.get("lons", []), seg.get("lats", [])
+        else:
+            lons, lats = seg
+        lons = np.asarray(lons, dtype=float)
+        lats = np.asarray(lats, dtype=float)
+        if lons.size == 0:
+            continue
+        fx, fy = _frac_coords(lons, lats, bbox)
+        frac_segs.append({"lons": fx, "lats": fy})
+    ae.draw_basemap(ax, frac_segs, style, mask=land_mask, zorder=1)
+
+
+# ---------------------------------------------------------------------------
+# Furniture layout: collision-aware placement, once per reel
+# ---------------------------------------------------------------------------
+
+#: Padding factor around the date dial's circle (month letters ring it).
+_DIAL_PAD = 1.35
+
+
+def _layout_furniture(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Run the engine's collision-aware placer once per reel.
+
+    Builds FurnitureSpecs from the preset's ``legend_layout`` (preferred
+    rects) with the priority/alternative contract from the engine's
+    docs/LAYOUT.md, measures real glyph extents on a probe canvas, and
+    returns ``{kind: PlacedItem}``. Static per reel: per-frame draw
+    functions reuse these rects (dial/timeline/counter *contents*
+    change per frame; their boxes don't).
+
+    Must run after the preset renderer sets ``ctx["encoding"]``.
+    """
+    ae = ctx["ae"]
+    preset = ctx["preset"]
+    spec = ctx["spec"]
+    lay = preset.legend_layout
+    subtitle = ctx["subtitle"]
+    name = preset.name
+    angle = ctx["angle"]
+
+    fig, ax = ae.new_canvas(_CANVAS_W, _CANVAS_H, background=preset.bg_rgb)
+    try:
+        specs = []
+        tx, ty = lay["title"][:2]
+        specs.append(ae.text_spec(
+            ax, "title", spec.title, tx, ty,
+            family="DejaVu Serif", size=preset.title_size, weight="bold",
+            priority=10))
+        sx, sy = lay["subtitle"][:2]
+        from aesthetics.typography import letterspace as _letterspace
+        if subtitle:
+            sub_measured = _letterspace(subtitle.upper())
+            specs.append(ae.text_spec(
+                ax, "subtitle", sub_measured, sx, sy,
+                family="DejaVu Sans", size=preset.subtitle_size,
+                priority=9, shrink=False,
+                alternatives=[(0.06, 0.78, 0.55, 0.05),
+                              (0.60, 0.875, 0.34, 0.05)]))
+        if name in ("dark_flow", "dark_strands"):
+            gx, gy, gw, gh = lay["gradient_bar"]
+            specs.append(ae.box_spec(
+                "gradient_bar", (gx, gy, gw, gh), priority=6,
+                alternatives=[(0.60, 0.18, gw, gh),
+                              (0.06, 0.08, 0.60, gh)]))
+            lx, ly, lw, lh = lay["timeline"]
+            specs.append(ae.box_spec(
+                "timeline", (lx, ly, lw, lh), priority=6,
+                alternatives=[(0.06, 0.05, lw, lh),
+                              (0.62, 0.26, lw, lh)]))
+        if name == "dark_glow":
+            cx0, cy0 = lay["counter"][:2]
+            specs.append(ae.box_spec(
+                "counter", (cx0, cy0 - 0.05, 0.32, 0.115), priority=7,
+                alternatives=[(0.62, 0.05, 0.32, 0.115)]))
+        if name in ("dark_glow", "paper_prism"):
+            dx, dy, dr = lay["date_dial"][:3]
+            dw = dh = 2 * dr * _DIAL_PAD
+            specs.append(ae.box_spec(
+                "date_dial",
+                (dx - dw / 2, dy - dh / 2, dw, dh), priority=5,
+                alternatives=[(0.80 - dw / 2, 0.52 - dh / 2, dw, dh),
+                              (0.78 - dw / 2, 0.10 - dh / 2, dw, dh)],
+                optional=True))
+        if name == "paper_prism":
+            specs.append(ae.box_spec(
+                "vertical_scale", (0.10, 0.24, 0.14, 0.34), priority=6,
+                alternatives=[(0.80, 0.24, 0.14, 0.34)]))
+        if angle:
+            nx, ny = lay.get("north_arrow", (0.06, 0.80))[:2]
+            specs.append(ae.box_spec(
+                "north_arrow", (nx, ny - 0.02, 0.10, 0.10), priority=8))
+        # Standalone honesty line (when not inside the watermark block).
+        enc = ctx.get("encoding")
+        if (ctx.get("watermark") is None
+                and ctx.get("encoding_line", True) and enc):
+            w, h = ae.text_extent_frac(ax, enc, family="DejaVu Sans Mono",
+                                       size=18)
+            specs.append(ae.text_spec(
+                ax, "encoding", enc, 0.5 - w / 2, 0.075,
+                family="DejaVu Sans Mono", size=18,
+                priority=4, optional=True, shrink=False,
+                alternatives=[(0.5 - w / 2, 0.115 - h, w, h)]))
+        placed = ae.place_furniture(specs, pad=0.012)
+        return {p.kind: p for p in placed}
+    finally:
+        import matplotlib.pyplot as _plt
+        _plt.close(fig)
+
+
+def _title_fit_scale(rect) -> float:
+    """Extra shrink-to-fit clamp for the title.
+
+    The engine's placer offers shrink steps down to 0.70, which cannot
+    fit very long titles; this clamps the drawn size so the title
+    never runs off the canvas edge.
+    """
+    _x, _y, w, _h = rect
+    max_w = 1.0 - _x - 0.02
+    if w > max_w > 0:
+        return max_w / w
+    return 1.0
+
+
+class _Furniture:
+    """Placed furniture for one reel: rects plus per-frame draw calls.
+
+    Built once per reel (after the preset renderer sets
+    ``ctx["encoding"]``); the per-frame ``draw_furniture`` closures
+    call these instead of using fixed ``legend_layout`` positions.
+    """
+
+    def __init__(self, ctx: Dict[str, Any]):
+        self._ctx = ctx
+        self.placed = _layout_furniture(ctx)
+
+    def _rect(self, kind: str):
+        p = self.placed.get(kind)
+        if p is None or not p.placed:
+            return None
+        return p.rect
+
+    def obstacle_rects(self) -> List[Tuple[float, float, float, float]]:
+        """Placed rects, for place_labels obstacles.
+
+        The gradient bar's drawn assembly (label above, ticks below)
+        and the timeline's readout above extend past the placed box;
+        the obstacles cover the full assembly so labels don't land
+        on them.
+        """
+        rects = []
+        for kind, p in self.placed.items():
+            if not p.placed:
+                continue
+            x, y, w, h = p.rect
+            if kind == "gradient_bar":
+                y -= 0.028
+                h += 0.056
+            elif kind == "timeline":
+                h += 0.030
+            rects.append((x, y, w, h))
+        return rects
+
+    def _colors(self):
+        preset = self._ctx["preset"]
+        return preset.text_color
+
+    def draw_title(self, ax):
+        ae = self._ctx["ae"]
+        preset, spec = self._ctx["preset"], self._ctx["spec"]
+        p = self.placed["title"]
+        # Shrink-to-fit: the engine's placed scale, then the extra clamp
+        # for titles longer than the engine's shrink floor can fit.
+        scale = p.scale * _title_fit_scale(
+            (p.rect[0], p.rect[1], p.rect[2] * p.scale, p.rect[3]))
+        ae.draw_title(ax, spec.title, p.rect[0], p.rect[1] + p.rect[3],
+                      size=preset.title_size * scale,
+                      color=preset.text_color)
+
+    def draw_subtitle(self, ax):
+        ae = self._ctx["ae"]
+        preset = self._ctx["preset"]
+        p = self.placed["subtitle"]
+        ae.draw_subtitle(ax, self._ctx["subtitle"],
+                         p.rect[0], p.rect[1] + p.rect[3],
+                         size=preset.subtitle_size,
+                         color=preset.text_color)
+
+    def draw_dial(self, ax, when):
+        ae = self._ctx["ae"]
+        r = self._rect("date_dial")
+        if r is None:
+            return
+        x, y, w, h = r
+        rad = min(w, h) / 2.0 / _DIAL_PAD
+        ae.date_dial(ax, x + w / 2.0, y + h / 2.0, rad, when,
+                     color=self._colors())
+
+    def draw_counter(self, ax, value, label):
+        ae = self._ctx["ae"]
+        r = self._rect("counter")
+        if r is None:
+            return
+        # Box top holds the label; the number's top anchor sits 0.05 in.
+        ae.counter(ax, r[0], r[1] + 0.05, value, label=label,
+                   color=self._colors())
+
+    def draw_gradient_bar(self, ax, vmin, vmax, label, unit):
+        ae = self._ctx["ae"]
+        r = self._rect("gradient_bar")
+        if r is None:
+            return
+        ae.gradient_bar(ax, r, self._ctx["cmap"], vmin, vmax,
+                        label=label, unit=unit, color=self._colors())
+
+    def draw_timeline(self, ax, t_start, t_end, t_now):
+        ae = self._ctx["ae"]
+        r = self._rect("timeline")
+        if r is None:
+            return
+        ae.timeline(ax, r, t_start, t_end, t_now, color=self._colors())
+
+    def draw_scale_bar(self, ax, vmin, vmax, label, unit):
+        ae = self._ctx["ae"]
+        r = self._rect("vertical_scale")
+        if r is None:
+            return
+        ae.vertical_scale_bar(ax, r[0], r[1], r[3] - 0.06, vmin, vmax,
+                              label=label, unit=unit,
+                              color=self._colors())
+
+    def draw_north_arrow(self, ax):
+        ae = self._ctx["ae"]
+        r = self._rect("north_arrow")
+        if r is None:
+            return
+        ae.draw_north_arrow(ax, r[0], r[1] + 0.02,
+                            angle_deg=self._ctx["angle"],
+                            color=self._colors())
+
+    def draw_encoding(self, ax):
+        ae = self._ctx["ae"]
+        r = self._rect("encoding")
+        if r is None:
+            return
+        ae.encoding_statement(ax, r[0] + r[2] / 2.0, r[1] + r[3],
+                              self._ctx["encoding"], color=self._colors())
+
+
 def _data_source_label(spec, field) -> str:
     """Uppercase data-source line for the furniture footer."""
     if isinstance(field, dict):
@@ -534,9 +843,12 @@ def _render_dark_flow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
     speed_max = smax if smax > 0 else 1.0
 
     _, _, coastline_segs, underlay_status = ctx["underlay_parts"]
-    lay = preset.legend_layout
+    basemap_style = ctx["basemap_style"]
     subtitle = ctx["subtitle"]
     rw, rh = ctx["render_size"]
+    # Furniture placed once per reel (static boxes; dial/timeline contents
+    # vary per frame).
+    ctx["furniture"] = furn = _Furniture(ctx)
 
     frames: List[str] = []
     timestamps: List[str] = []
@@ -550,24 +862,18 @@ def _render_dark_flow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
         def draw_map(ax):
             ax.imshow(tex, extent=[0, 1, 0, 1], origin="upper",
                       transform=ax.transAxes, aspect="auto", zorder=2)
-            _draw_coastlines_frac(ax, coastline_segs, spec.bbox,
-                                  color="#3a3f4a")
+            _draw_basemap_frac(ax, ae, coastline_segs, spec.bbox,
+                               basemap_style)
 
         def draw_furniture(ax):
-            ae.draw_title(ax, spec.title, *lay["title"],
-                          size=preset.title_size, color=preset.text_color)
-            ae.draw_subtitle(ax, subtitle, *lay["subtitle"],
-                             size=preset.subtitle_size,
-                             color=preset.text_color)
-            ae.timeline(ax, lay["timeline"], moments[frame_idx[0]],
-                        moments[frame_idx[-1]], moment,
-                        color=preset.text_color)
-            ae.gradient_bar(ax, lay["gradient_bar"], cname, vmin, vmax,
-                            label=flow["scalar_label"],
-                            unit=flow["scalar_unit"],
-                            color=preset.text_color)
-            ae.draw_north_arrow(ax, *lay["north_arrow"], angle_deg=angle,
-                                color=preset.text_color)
+            furn.draw_title(ax)
+            furn.draw_subtitle(ax)
+            furn.draw_timeline(ax, moments[frame_idx[0]],
+                               moments[frame_idx[-1]], moment)
+            furn.draw_gradient_bar(ax, vmin, vmax, flow["scalar_label"],
+                                   flow["scalar_unit"])
+            furn.draw_north_arrow(ax)
+            furn.draw_encoding(ax)
             ctx["draw_furniture_common"](ax)
 
         _write_frame(ctx, n, draw_map, draw_furniture)
@@ -577,6 +883,195 @@ def _render_dark_flow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
     render_info = {
         "vmin": vmin, "vmax": vmax, "speed_max": speed_max,
         "scalar": f"{flow['scalar_label']} ({flow['scalar_unit']})",
+        "underlay": underlay_status,
+    }
+    return frames, timestamps, render_info
+
+
+# ---------------------------------------------------------------------------
+# dark_strands: advected particle trails (wind / currents)
+# ---------------------------------------------------------------------------
+
+def _lonlat_to_frac(lon: float, lat: float,
+                    bbox: Tuple[float, float, float, float]
+                    ) -> Tuple[float, float]:
+    """Single lon/lat -> axes-fraction point (y down)."""
+    lon0, lat0, lon1, lat1 = bbox
+    fx = (lon - lon0) / (lon1 - lon0) if lon1 != lon0 else 0.5
+    fy = 1.0 - (lat - lat0) / (lat1 - lat0) if lat1 != lat0 else 0.5
+    return fx, fy
+
+
+def _render_dark_strands(ctx: Dict[str, Any]
+                         ) -> Tuple[List[str], List[str], Dict[str, Any]]:
+    """Render advected strand frames (the warming.watch look).
+
+    Per data timestep: seed ``strand_count`` particles (fixed seed —
+    recombed, deterministic), spin the trails up on that timestep's
+    field, and render hair-like strands colored by the scalar at each
+    trail head. Reel-wide fixed vmin/vmax; the ocean mask (currents)
+    clips strands so geography emerges with no basemap drawn.
+    """
+    ae = ctx["ae"]
+    np = _np()
+    spec, field = ctx["spec"], ctx["field"]
+    preset, cname = ctx["preset"], ctx["cmap"]
+    angle = ctx["angle"]
+    out = Path(ctx["out_dir"])
+    out.mkdir(parents=True, exist_ok=True)
+    strand_count = ctx["strand_count"]
+    strand_lw = ctx["strand_linewidth"]
+
+    advect, fields_mod = _flow()
+    flow = _extract_flow(spec, field)
+    var = spec.variable
+    u, v, scalar = flow["u"], flow["v"], flow["scalar"]
+    scalar_label, scalar_unit = flow["scalar_label"], flow["scalar_unit"]
+    # The strand color: for currents _extract_flow's scalar is already
+    # temperature; for wind the warming.watch convention colors the wind
+    # strands by the 2 m air temperature, not by wind speed.
+    scalar_name = "temperature" if var == "currents" else "air_temperature"
+    if var == "wind":
+        t2m = (field.get("air_temperature")
+               if isinstance(field, dict)
+               else getattr(field, "air_temperature", None))
+        if t2m is None:
+            raise ValueError(
+                "preset 'dark_strands' on wind needs an 'air_temperature' "
+                "scalar on the field (the strands are colored by it)")
+        scalar = np.asarray(t2m, dtype=float)
+        scalar_label, scalar_unit = "air temperature", (
+            field.get("temperature_unit", "°F")
+            if isinstance(field, dict)
+            else getattr(field, "temperature_unit", "°F"))
+    lats, lons = flow["lats"], flow["lons"]
+    moments = _as_datetimes(flow["times"])
+    dates = [m.date() for m in moments]
+    from .render import _bucket_indices
+    frame_idx = _bucket_indices(dates, spec.cadence)
+
+    # Reel-wide fixed scales (never per-frame — that flickers).
+    if spec.vmin is not None and spec.vmax is not None:
+        vmin, vmax = float(spec.vmin), float(spec.vmax)
+    else:
+        vmin, vmax = _nanminmax(np, scalar)
+        if spec.vmin is not None:
+            vmin = float(spec.vmin)
+        if spec.vmax is not None:
+            vmax = float(spec.vmax)
+    if not vmax > vmin:
+        vmax = vmin + 1.0
+    if spec.vmin is None:
+        vmin = round(vmin, 1)
+    if spec.vmax is None:
+        vmax = round(vmax, 1)
+    if not vmax > vmin:
+        vmax = vmin + 1.0
+
+    # Ocean mask for currents (True keeps strands); row 0 = top for the
+    # engine. Wind has no raster landmask in the offline peer set, so it
+    # renders unclipped (documented limit).
+    ocean_mask = None
+    land_mask = None
+    if spec.variable == "currents":
+        water = ~(np.isnan(u[0]) | np.isnan(v[0]))
+        if not np.any(water):
+            raise ValueError(
+                "preset 'dark_strands' on 'currents' found no ocean "
+                "cells in the region — the strand mask is empty")
+        ocean_mask = water[::-1, :]  # row 0 = top
+        land_mask = (~water)[::-1, :]
+
+    _, _, coastline_segs, underlay_status = ctx["underlay_parts"]
+    basemap_style = ctx["basemap_style"]
+    subtitle = ctx["subtitle"]
+    rw, rh = ctx["render_size"]
+    bbox = tuple(float(x) for x in spec.bbox)
+    ctx["encoding"] = f"COLOR = {flow['scalar_label'].upper()}"
+
+    # Furniture placed once per reel (static boxes; contents vary).
+    ctx["furniture"] = furn = _Furniture(ctx)
+
+    frames: List[str] = []
+    timestamps: List[str] = []
+    for n, i in enumerate(frame_idx):
+        moment = moments[i]
+        vf = fields_mod.VectorField(
+            np.asarray(u[i], dtype=float),
+            np.asarray(v[i], dtype=float),
+            np.asarray(lats, dtype=float),
+            np.asarray(lons, dtype=float),
+            scalar=np.asarray(scalar[i], dtype=float),
+            scalar_name=scalar_name,
+        )
+        cfg = advect.AdvectionConfig(
+            dt_seconds=_STRAND_DT_SECONDS,
+            trail_length=_STRAND_TRAIL_LENGTH,
+            seed=_STRAND_SEED,
+        )
+        ps = advect.ParticleSet(strand_count, vf, cfg, seed=_STRAND_SEED)
+        for _ in range(_STRAND_SPINUP_STEPS):
+            ps.step(vf)
+        segs, valid = ps.trail_segments()  # (n, L-1, 2, 2) lon/lat
+        trails: List[Any] = []
+        head_lons: List[float] = []
+        head_lats: List[float] = []
+        for s, ok_row in zip(segs, valid):
+            # (L-1) segments -> one L-point polyline: first segment's
+            # start, then each segment's end. Dead links become NaN
+            # vertices, which the engine splits into sub-trails.
+            pts = []
+            for k, seg in enumerate(s):
+                ok = bool(ok_row[k])
+                if k == 0:
+                    pts.append(_lonlat_to_frac(
+                        float(seg[0][0]), float(seg[0][1]), bbox)
+                        if ok else (float("nan"), float("nan")))
+                pts.append(_lonlat_to_frac(
+                    float(seg[1][0]), float(seg[1][1]), bbox)
+                    if ok else (float("nan"), float("nan")))
+            trails.append(np.array(pts, dtype=float))
+            head_lons.append(float(s[-1][1][0]))
+            head_lats.append(float(s[-1][1][1]))
+        head_vals = vf.sample_scalar(np.asarray(head_lons),
+                                     np.asarray(head_lats))
+        rgba = ae.render_strands(
+            trails, head_vals,
+            vmin=vmin, vmax=vmax, cmap=cname,
+            width_px=1080, height_px=1920,
+            linewidth=strand_lw,
+            mask=ocean_mask, mask_feather=3.0,
+        )
+
+        def draw_map(ax, _rgba=rgba):
+            ax.imshow(_rgba, extent=[0, 1, 0, 1], origin="upper",
+                      transform=ax.transAxes, aspect="auto", zorder=2)
+            _draw_basemap_frac(ax, ae, coastline_segs, spec.bbox,
+                               basemap_style, land_mask=land_mask)
+
+        def draw_furniture(ax, _moment=moment):
+            furn.draw_title(ax)
+            furn.draw_subtitle(ax)
+            furn.draw_timeline(ax, moments[frame_idx[0]],
+                               moments[frame_idx[-1]], _moment)
+            furn.draw_gradient_bar(ax, vmin, vmax, scalar_label,
+                                   scalar_unit)
+            furn.draw_north_arrow(ax)
+            furn.draw_encoding(ax)
+            ctx["draw_furniture_common"](ax)
+
+        _write_frame(ctx, n, draw_map, draw_furniture)
+        frames.append(str((out / f"frame_{n + 1:04d}.png").resolve()))
+        timestamps.append(moment.isoformat())
+
+    render_info = {
+        "vmin": vmin, "vmax": vmax,
+        "scalar": f"{scalar_label} ({scalar_unit})",
+        "scalar_name": scalar_name,
+        "strand_count": strand_count,
+        "strand_linewidth": strand_lw,
+        "strand_seed": _STRAND_SEED,
+        "mask": "ocean" if ocean_mask is not None else None,
         "underlay": underlay_status,
     }
     return frames, timestamps, render_info
@@ -720,10 +1215,12 @@ def _render_dark_glow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
     ctx["encoding"] = f"BRIGHTNESS = {ev['value_label'].upper()}"
 
     _, _, coastline_segs, underlay_status = ctx["underlay_parts"]
-    lay = preset.legend_layout
-    subtitle = ctx["subtitle"]
+    basemap_style = ctx["basemap_style"]
     rw, rh = ctx["render_size"]
     lon0, lat0, lon1, lat1 = (float(v) for v in spec.bbox)
+    # Furniture placed once per reel (static boxes; dial/counter contents
+    # vary per frame).
+    ctx["furniture"] = furn = _Furniture(ctx)
 
     # Event lon/lat -> pixel coordinates on the (possibly enlarged) map canvas.
     fx_all = (ev["lons"] - lon0) / (lon1 - lon0)
@@ -745,25 +1242,18 @@ def _render_dark_glow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
         def draw_map(ax, _glow=glow):
             ax.imshow(_glow, extent=[0, 1, 0, 1], origin="upper",
                       transform=ax.transAxes, aspect="auto", zorder=2)
-            _draw_coastlines_frac(ax, coastline_segs, spec.bbox,
-                                  color="#3a3f4a")
+            _draw_basemap_frac(ax, ae, coastline_segs, spec.bbox,
+                               basemap_style)
 
         count = int(shown.sum())
 
         def draw_furniture(ax, _count=count, _now=now):
-            ae.draw_title(ax, spec.title, *lay["title"],
-                          size=preset.title_size, color=preset.text_color)
-            ae.draw_subtitle(ax, subtitle, *lay["subtitle"],
-                             size=preset.subtitle_size,
-                             color=preset.text_color)
-            ae.counter(ax, *lay["counter"], _count,
-                       label=ev["count_label"], color=preset.text_color)
-            dd = lay["date_dial"]
-            ae.date_dial(ax, dd[0], dd[1], dd[2], _now,
-                         color=preset.text_color)
-            if angle:
-                ae.draw_north_arrow(ax, 0.06, 0.80, angle_deg=angle,
-                                    color=preset.text_color)
+            furn.draw_title(ax)
+            furn.draw_subtitle(ax)
+            furn.draw_counter(ax, _count, ev["count_label"])
+            furn.draw_dial(ax, _now)
+            furn.draw_north_arrow(ax)
+            furn.draw_encoding(ax)
             ctx["draw_furniture_common"](ax)
 
         _write_frame(ctx, n, draw_map, draw_furniture)
@@ -841,9 +1331,11 @@ def _render_paper_prism(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict
     grid_ny, grid_nx = small.shape
 
     lay = preset.legend_layout
-    subtitle = ctx["subtitle"]
     rw, rh = ctx["render_size"]
     unit = ctx.get("unit") or ""
+    var_label = _variable_label(spec.variable)
+    # Furniture placed once per reel (static boxes; dial contents vary).
+    ctx["furniture"] = furn = _Furniture(ctx)
 
     frames: List[str] = []
     timestamps: List[str] = []
@@ -862,22 +1354,12 @@ def _render_paper_prism(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict
                       transform=ax.transAxes, aspect="auto", zorder=1)
 
         def draw_furniture(ax, _moment=moment):
-            ae.draw_title(ax, spec.title, *lay["title"],
-                          size=preset.title_size, color=preset.text_color)
-            ae.draw_subtitle(ax, subtitle, *lay["subtitle"],
-                             size=preset.subtitle_size,
-                             color=preset.text_color)
-            # The preset's scale-bar slot (x=0.06) clips tick labels at
-            # the frame edge; nudged right onto clear paper.
-            ae.vertical_scale_bar(ax, 0.10, 0.30, 0.28, vmin, vmax,
-                                  label=_variable_label(spec.variable),
-                                  unit=unit, color=preset.text_color)
-            dd = lay["date_dial"]
-            ae.date_dial(ax, dd[0], dd[1], dd[2], _moment,
-                         color=preset.text_color)
-            if angle:
-                ae.draw_north_arrow(ax, 0.06, 0.80, angle_deg=angle,
-                                    color=preset.text_color)
+            furn.draw_title(ax)
+            furn.draw_subtitle(ax)
+            furn.draw_scale_bar(ax, vmin, vmax, var_label, unit)
+            furn.draw_dial(ax, _moment)
+            furn.draw_north_arrow(ax)
+            furn.draw_encoding(ax)
             ctx["draw_furniture_common"](ax)
 
         _write_frame(ctx, n, draw_map, draw_furniture)
@@ -950,6 +1432,9 @@ def render_preset_viz(
     place_labels: Any = True,
     max_labels: int = 8,
     min_population: int = 0,
+    basemap: Optional[str] = None,
+    strand_count: int = _DEFAULT_STRAND_COUNT,
+    strand_linewidth: float = _DEFAULT_STRAND_LINEWIDTH,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec through a survey-aesthetics preset.
 
@@ -985,6 +1470,19 @@ def render_preset_viz(
         max_labels: cap for automatic labels (default 8).
         min_population: minimum place population for automatic labels
             (default 0).
+        basemap: basemap style for the preset path — one of
+            ``"void_black"`` (hairline coastlines on the black void),
+            ``"no_basemap"`` (nothing drawn; geography emerges from the
+            data mask), ``"subtle_land"`` (faint landmass under
+            hairlines; needs a landmask, otherwise coastlines only).
+            ``None`` (default) keeps the preset's bundled style.
+            Unknown names fail fast.
+        strand_count: particle count per frame for the ``dark_strands``
+            preset (default 3000; the engine's cost note: ~1.3 s/frame
+            at 4000). Preset-path only.
+        strand_linewidth: strand width in points for ``dark_strands``
+            (default 1.4; 1–2 reads hair-like at 1080x1920).
+            Preset-path only.
 
     Returns ``(frames, manifest_path)`` like :func:`viz.render.render_viz`.
     """
@@ -1001,11 +1499,37 @@ def render_preset_viz(
 
     angle = _resolve_rotation(rotation, spec.bbox)
     preset_obj = ae.get_preset(preset)
+    # The dark_strands preset's honesty line names air temperature (the
+    # warming.watch wind look); on currents the strands show water
+    # temperature — say so.
+    encoding = preset_obj.encoding
+    if preset == "dark_strands" and spec.variable == "currents":
+        encoding = "COLOR = WATER TEMPERATURE"
 
     from .render import _fetch_underlay_once, _require_plotting, _validate_cmap
     plt, _, np = _require_plotting()
     cname = _validate_cmap(cmap, plt) or preset_obj.cmap
     underlay_parts = _fetch_underlay_once(spec, plt, np, bool(underlay))
+
+    # Basemap style: explicit choice wins; otherwise the preset default.
+    if basemap is None:
+        basemap_style = preset_obj.basemap
+        basemap_name = preset_obj.basemap.name
+    else:
+        try:
+            basemap_style = ae.get_basemap(basemap)
+        except KeyError as exc:
+            raise ValueError(
+                f"unknown basemap {basemap!r}; choose from "
+                f"{ae.list_basemaps()} or None for the preset default"
+            ) from exc
+        basemap_name = basemap_style.name
+    if strand_count <= 0:
+        raise ValueError(
+            f"strand_count must be positive, got {strand_count!r}")
+    if not strand_linewidth > 0:
+        raise ValueError(
+            f"strand_linewidth must be positive, got {strand_linewidth!r}")
 
     if angle:
         render_size = ae.rotated_render_size(angle, (_CANVAS_W, _CANVAS_H))
@@ -1029,10 +1553,9 @@ def render_preset_viz(
 
     def draw_furniture_common(ax):
         enc = ctx.get("encoding") or ""
-        if encoding_line and enc and watermark is None:
-            # Without the watermark block the honesty line stands alone.
-            ae.encoding_statement(ax, 0.5, 0.075, enc,
-                                  color=preset_obj.text_color)
+        # The standalone honesty line is placed by the furniture layout
+        # (ctx["furniture"].draw_encoding); only the watermark block keeps
+        # its fixed corner position.
         if watermark:
             import datetime as _dtd
             ae.frame_furniture(
@@ -1042,11 +1565,22 @@ def render_preset_viz(
                 encoding=enc if encoding_line else None,
                 color=preset_obj.text_color)
         if ctx["place_canvas_labels"]:
-            # Geographic labels, upright on the final canvas; the
+            # Geographic labels, upright on the final canvas; they avoid
+            # the placed furniture rects (dial, legends), then the
             # engine's greedy decluttering drops what cannot fit.
-            ae.place_labels(ax, ctx["place_canvas_labels"],
-                            color=preset_obj.text_color,
-                            dot_color=preset_obj.text_color)
+            furniture = ctx.get("furniture")
+            obstacles = (furniture.obstacle_rects()
+                         if furniture is not None else [])
+            try:
+                ae.place_labels(ax, ctx["place_canvas_labels"],
+                                color=preset_obj.text_color,
+                                dot_color=preset_obj.text_color,
+                                obstacles=obstacles)
+            except TypeError:
+                # Older engine without the obstacles kwarg.
+                ae.place_labels(ax, ctx["place_canvas_labels"],
+                                color=preset_obj.text_color,
+                                dot_color=preset_obj.text_color)
 
     ctx: Dict[str, Any] = {
         "ae": ae, "spec": spec, "field": field, "preset": preset_obj,
@@ -1054,7 +1588,13 @@ def render_preset_viz(
         "render_size": render_size, "subtitle": subtitle_text,
         "underlay_parts": underlay_parts,
         "draw_furniture_common": draw_furniture_common,
-        "encoding": preset_obj.encoding,
+        "encoding": encoding,
+        "encoding_line": encoding_line,
+        "watermark": watermark,
+        "basemap_style": basemap_style,
+        "basemap_name": basemap_name,
+        "strand_count": strand_count,
+        "strand_linewidth": strand_linewidth,
         "place_canvas_labels": canvas_labels,
     }
 
@@ -1062,6 +1602,8 @@ def render_preset_viz(
         frames, timestamps, info = _render_dark_flow(ctx)
     elif preset == "dark_glow":
         frames, timestamps, info = _render_dark_glow(ctx)
+    elif preset == "dark_strands":
+        frames, timestamps, info = _render_dark_strands(ctx)
     else:
         frames, timestamps, info = _render_paper_prism(ctx)
 
@@ -1084,6 +1626,15 @@ def render_preset_viz(
             "watermark": watermark,
             "subtitle": subtitle_text,
             "encoding_line": encoding_line,
+            "basemap": basemap_name,
+            "strand_count": strand_count,
+            "strand_linewidth": strand_linewidth,
+            "furniture": {
+                kind: {"rect": list(p.rect), "placed": bool(p.placed),
+                       "scale": float(p.scale)}
+                for kind, p in (ctx["furniture"].placed
+                                if "furniture" in ctx else {}).items()
+            },
             "n_frames": len(frames),
             "place_labels": {
                 "mode": label_mode,  # "auto" | "explicit" | "off"

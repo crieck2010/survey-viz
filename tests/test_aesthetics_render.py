@@ -115,7 +115,8 @@ def test_legacy_path_byte_identical_with_new_kwargs(tmp_path):
 
 
 def test_preset_names():
-    assert set(AESTHETIC_PRESETS) == {"dark_flow", "dark_glow", "paper_prism"}
+    assert set(AESTHETIC_PRESETS) == {"dark_flow", "dark_glow", "paper_prism",
+                                      "dark_strands"}
 
 
 # ---------------------------------------------------------------------------

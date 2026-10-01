@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-10-01
+
+### Added
+- **`dark_strands` aesthetic preset** (the warming.watch look):
+  thousands of hair-like particle strands advected through the
+  vector field via the **survey-flow** peer engine (`VectorField` /
+  `ParticleSet`, now in the `aesthetics` extra pinned to its GitHub
+  release), colored by temperature on the black void.
+  `render_viz(..., preset="dark_strands", strand_count=3000,
+  strand_linewidth=1.4)` with CLI flags `--strand-count` /
+  `--strand-linewidth`. Per timestep: fixed-seed (7) recombed
+  particles, 12 hourly spinup steps, 12-step trails with head-to-tail
+  alpha fade, reel-wide rounded vmin/vmax. Currents are clipped to an
+  ocean mask (NaN = land; all-land is an honest `ValueError`) so
+  geography emerges with no basemap; wind strands are colored by 2 m
+  air temperature (fails fast without it) and render unclipped (no
+  offline raster landmask — documented). The honesty line reads
+  `COLOR = WATER TEMPERATURE` on currents.
+- **Basemap style controls** on the preset path:
+  `render_viz(..., basemap=...)` / `--basemap` with `void_black`
+  (hairline coastlines), `no_basemap` (nothing drawn), `subtle_land`
+  (faint landmass + hairlines); `None` (default) keeps the preset's
+  bundled style. Unknown names fail fast; `basemap` without `preset`
+  is a `ValueError`. All four presets now draw coastlines through
+  the engine's `draw_basemap` instead of fixed hairlines.
+- **Collision-aware furniture layout**: titles, subtitles, legends,
+  dials, and the honesty line are placed once per reel by the
+  engine's `place_furniture` (preferred rects + priorities + fallbacks
+  from the preset's `legend_layout`, measured from real glyph
+  extents) — no more overlapping or clipped furniture. Long titles
+  shrink to fit. Place labels now avoid the placed furniture rects
+  via `place_labels(..., obstacles=...)`. Every placed rect is
+  recorded in the manifest.
+- `survey-aesthetics` peer pin bumped v0.1.0 → v0.2.0 in the
+  `aesthetics` extra (new `render_strands`, `draw_basemap`,
+  `place_furniture`, `dark_strands` preset APIs).
+
+### Fixed
+- The timeline's timestamp readout no longer draws twice (the
+  engine's `timeline` already includes one).
+- The `dark_strands` honesty line names water temperature on
+  currents instead of the preset's air-temperature default.
+
 ## [0.23.0] - 2026-09-30
 
 ### Added

@@ -132,6 +132,9 @@ def _cmd_render(args: argparse.Namespace) -> int:
             place_labels=args.place_labels,
             max_labels=args.max_labels,
             min_population=args.min_population,
+            basemap=args.basemap,
+            strand_count=args.strand_count,
+            strand_linewidth=args.strand_linewidth,
         )
     except RuntimeError as exc:  # e.g. matplotlib missing
         print(f"error: {exc}", file=sys.stderr)
@@ -178,7 +181,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-underlay", action="store_true",
                    help="Disable the GEBCO/coastline basemap underlay.")
     r.add_argument("--preset", default=None,
-                   choices=["dark_flow", "dark_glow", "paper_prism"],
+                   choices=["dark_flow", "dark_glow", "paper_prism",
+                            "dark_strands"],
                    help="mapped.earth aesthetic preset (needs the "
                         "survey-aesthetics peer: pip install "
                         "'survey-viz[aesthetics]').")
@@ -206,6 +210,16 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--min-population", type=int, default=0,
                    help="Minimum place population for automatic place "
                         "labels (default 0).")
+    r.add_argument("--basemap", default=None,
+                   choices=["void_black", "no_basemap", "subtle_land"],
+                   help="Basemap style for the preset path (default: the "
+                        "preset's bundled style).")
+    r.add_argument("--strand-count", type=int, default=3000,
+                   help="Particle count per frame for the dark_strands "
+                        "preset (default 3000).")
+    r.add_argument("--strand-linewidth", type=float, default=1.4,
+                   help="Strand width in points for the dark_strands "
+                        "preset (default 1.4).")
     r.set_defaults(func=_cmd_render)
     return parser
 

@@ -1,8 +1,8 @@
 # Aesthetic presets (mapped.earth look)
 
 `render_viz(..., preset=...)` renders through the **survey-aesthetics**
-peer engine (v0.1.0+) instead of the standard matplotlib data map. The
-three presets reproduce the visual system of mapped.earth reference
+peer engine (v0.2.0+) instead of the standard matplotlib data map. The
+four presets reproduce the visual system of mapped.earth reference
 reels: chrome-free full-bleed frames, editorial typography, custom
 legends, and an explicit statement of what is encoded.
 
@@ -13,6 +13,7 @@ legends, and an explicit statement of what is encoded.
 | `dark_flow` | LIC flow streaks on black; hue = scalar, brightness = speed | `currents`, `wind` | `lic_texture` |
 | `dark_glow` | additive event glow with bloom on black | `earthquakes`, `storm-tracks` | `glow_from_grid` over splatted disks |
 | `paper_prism` | 3D prism extrusion on warm paper; height = value | any continuous gridded variable (`tp` is the reference case) | `prism_frame` |
+| `dark_strands` | advected hair-like particle strands on black; color = temperature | `currents`, `wind` | `render_strands` over survey-flow trails |
 
 A preset on a variable without the data it needs is a `ValueError`
 with the reason — never a silently wrong picture.
@@ -49,12 +50,85 @@ with the reason — never a silently wrong picture.
 * Legends: vertical scale bar, date dial, the preset's honesty line
   ("Height is millimetres per day. Nothing else is encoded.").
 
+### dark_strands details
+
+The warming.watch look: thousands of hair-like strands advected
+through the vector field, colored by temperature, on the black void
+with no basemap drawn — geography emerges from the data itself.
+
+* `currents` (CurrentField): strands follow the current vectors;
+  color = water temperature in °F (the honesty line reads
+  `COLOR = WATER TEMPERATURE`).
+* `wind` (Era5Field): strands follow the 10 m wind vectors; color =
+  2 m air temperature (the honesty line reads
+  `COLOR = AIR TEMPERATURE`). Wind needs an `air_temperature` scalar
+  on the field — without it the preset fails fast instead of coloring
+  by wind speed.
+* Per data timestep: 3000 particles are seeded (fixed seed `7` —
+  recombed, so the render is deterministic), spun up for 12 hourly
+  advection steps on that timestep's field, and their 12-step trails
+  rendered with head-to-tail alpha fade. `strand_count` (default 3000)
+  and `strand_linewidth` (default 1.4 pt) are tunable.
+* `vmin`/`vmax` are reel-wide and rounded like `dark_flow`.
+* For `currents` the strands are clipped to an ocean mask (NaN =
+  land in the field), feathered 3 px — with no basemap drawn, the
+  lake/coastline shape is drawn by the strands stopping at the shore.
+  An all-land field is an honest `ValueError`, not an empty reel.
+  Wind is not masked (there is no offline raster landmask in this
+  stack — see "Honest limits").
+* Legends: timeline scrubber with mono timestamp, gradient bar with
+  min/max, north arrow, the honesty line.
+
+```python
+frames, manifest = render_viz(
+    spec, field, None, out_dir="frames", preset="dark_strands",
+    strand_count=4000, strand_linewidth=1.2,
+)
+```
+
 ## Fixed scales (no flicker)
 
 `vmin`/`vmax`/`speed_max` are computed once from the full dataset and
 reused for every frame. Explicit `spec.vmin`/`vmax` always win over the
 data range. Data-derived scales are rounded to one decimal for clean
 legend labels.
+
+## Basemap styles
+
+`basemap=` chooses what geography is drawn under the data layer
+(preset-path only; `None` keeps the preset's bundled style). Unknown
+names fail fast listing the choices.
+
+| style | draws |
+|---|---|
+| `void_black` | hairline coastlines on the black void (the `dark_flow`/`dark_glow` default) |
+| `no_basemap` | nothing — geography emerges from the data mask (the `dark_strands` default) |
+| `subtle_land` | faint landmass fill under hairline coastlines (needs a landmask; falls back to coastlines-only when none is available) |
+
+```python
+frames, manifest = render_viz(
+    spec, field, None, out_dir="frames", preset="dark_flow",
+    basemap="no_basemap",   # pure data on the void
+)
+```
+
+The manifest records the resolved style. `basemap` without `preset`
+is a `ValueError` (it has no meaning on the legacy renderer).
+
+## Furniture layout
+
+Titles, subtitles, legends, dials, and the honesty line are placed
+by the engine's collision-aware placer (`place_furniture`), not at
+fixed coordinates: each item carries a preferred rect, a priority,
+and fallback positions, and the placer fits them without overlap
+(measured from real glyph extents on a probe canvas). The placement
+runs once per reel; per-frame draw calls reuse the same rects. Long
+titles shrink to fit instead of running off the canvas edge.
+
+Place labels avoid the placed furniture rects (via the engine's
+`place_labels(..., obstacles=...)`), then the engine's greedy
+decluttering drops what still cannot fit. The manifest records every
+placed rect, so a render's layout is fully auditable.
 
 ## Frame rotation
 
@@ -162,9 +236,24 @@ scrubber (dark_flow), cumulative counter + date dial (dark_glow).
   trades streak length for speed); prism grids are capped at ~60×44.
 * Byte-determinism is matplotlib-version-pinned (same rule as the
   legacy renderer).
-* The engine v0.1.0 top-level namespace omits `draw_north_arrow` and
-  `close` even though its own `docs/API.md` promises them; this module
-  resolves both from their submodules without modifying the release.
+* The engine v0.1.0 top-level namespace omits `draw_north_arrow`,
+  `close`, and `letterspace` even though its own `docs/API.md`
+  promises them; this module resolves them from their submodules
+  (or stdlib) without modifying the release. v0.2.0 is now the
+  pinned engine.
+* Strand rendering needs the **survey-flow** peer (now in the
+  `aesthetics` extra, pinned to its GitHub release) for
+  `VectorField`/`ParticleSet`; without it `preset="dark_strands"`
+  raises the honest peer-missing error. The other three presets never
+  import it.
+* Wind strands are not land-masked: there is no offline raster
+  landmask in this stack, so `no_basemap` + wind draws strands over
+  land as well as sea. Currents are masked by the field's own NaN
+  (land) — which is why the preset requires a current field with a
+  real land mask.
+* Strand cost is ~1–2 s/frame at 3000 particles (12 spinup steps +
+  trail rasterization); the 4000-particle reference is ~1.3 s/frame
+  on the engine's benchmark.
 * The engine's glow blur is designed for dense gridded energy: sparse
   events are splatted as disks first (see above), so dot size is fixed
   in pixels rather than data-scaled.

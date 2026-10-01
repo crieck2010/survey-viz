@@ -713,6 +713,9 @@ def render_viz(
     place_labels: Any = True,
     max_labels: int = 8,
     min_population: int = 0,
+    basemap: Optional[str] = None,
+    strand_count: int = 3000,
+    strand_linewidth: float = 1.4,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -794,7 +797,8 @@ def render_viz(
     preset_requested = (
         preset is not None or rotation is not None
         or watermark is not None or subtitle is not None
-        or encoding_line is not True
+        or encoding_line is not True or basemap is not None
+        or strand_count != 3000 or strand_linewidth != 1.4
         # An explicit label list, or non-default label tuning, only has
         # meaning on the preset path. (place_labels=False and the
         # default True are no-ops on the legacy renderer.)
@@ -803,10 +807,12 @@ def render_viz(
     if preset_requested:
         if preset is None:
             raise ValueError(
-                "rotation/watermark/subtitle/encoding_line/place_labels/"
+                "rotation/watermark/subtitle/encoding_line/basemap/"
+                "strand_count/strand_linewidth/place_labels/"
                 "max_labels/min_population need "
-                "preset='dark_flow'/'dark_glow'/'paper_prism' — they are "
-                "preset-path options with no meaning on the legacy renderer")
+                "preset='dark_flow'/'dark_glow'/'paper_prism'/'dark_strands' "
+                "— they are preset-path options with no meaning on the "
+                "legacy renderer")
         if story_captions:
             raise ValueError(
                 "story_captions is a legacy-path feature; the preset path "
@@ -822,7 +828,9 @@ def render_viz(
             watermark=watermark, subtitle=subtitle,
             encoding_line=encoding_line, underlay=want_underlay,
             cmap=cmap, style=style, place_labels=place_labels,
-            max_labels=max_labels, min_population=min_population)
+            max_labels=max_labels, min_population=min_population,
+            basemap=basemap, strand_count=strand_count,
+            strand_linewidth=strand_linewidth)
     style = style or spec.style
     if style not in _STYLE:
         raise ValueError(f"Unknown style: {style!r} (expected one of {sorted(_STYLE)})")
