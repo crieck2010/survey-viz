@@ -9,8 +9,8 @@ import pytest
 import viz
 from viz import VizSpec
 from viz.parser import parse_description
-from viz.sources import (default_source, fetch_for_source, is_fetchable,
-                         resolve_source)
+from viz.sources import (KNOWN_SOURCES, SOURCE_LABELS, default_source,
+                         fetch_for_source, is_fetchable, resolve_source)
 
 
 def _spec(**kw):
@@ -387,3 +387,18 @@ def test_known_variables_include_fire_and_burn_scar():
     assert "fire" in KNOWN_VARIABLES
     assert "burn-scar" in KNOWN_VARIABLES
     assert "firms" in KNOWN_SOURCES
+
+
+def test_gfs_wind_source_registered():
+    # survey-viz 0.25.0: the keyless GFS wind source is a known,
+    # explicitly-pinnable source; the wind default stays era5.
+    assert "gfs-wind" in KNOWN_SOURCES
+    assert SOURCE_LABELS["gfs-wind"] == "NOAA GFS 10m winds (NOMADS), keyless"
+    assert resolve_source(_spec(source="gfs-wind")) == "gfs-wind"
+    assert resolve_source(_spec(source="", variable="wind")) == "era5"
+
+
+def test_gfs_wind_spec_source_validates():
+    spec = _spec(region_key="north-america", variable="wind",
+                 bbox=(-130.0, 25.0, -65.0, 50.0), source="gfs-wind")
+    assert spec.source == "gfs-wind"
