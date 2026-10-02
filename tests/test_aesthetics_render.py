@@ -193,14 +193,19 @@ def test_dark_flow_renders_and_manifest(tmp_path):
 
 
 def test_dark_flow_fixed_scales_from_full_dataset(tmp_path):
+    # robust_scale=False pins the legacy min/max behavior; the default
+    # (robust_scale=True) uses the autopilot p2/p98 limits — covered in
+    # tests/test_autopilot_wiring.py.
     field = _FakeCurrents()
     spec = _spec(variable="currents")
     _, manifest_path = render_viz(spec, field, None, out_dir=tmp_path,
-                                  preset="dark_flow", underlay=False)
+                                  preset="dark_flow", underlay=False,
+                                  robust_scale=False)
     r = json.loads(Path(manifest_path).read_text())["render"]
     expected = np.asarray(field.temperature) * 9.0 / 5.0 + 32.0
     assert r["vmin"] == round(float(np.nanmin(expected)), 1)
     assert r["vmax"] == round(float(np.nanmax(expected)), 1)
+    assert r["scale_method"] == "minmax"
 
 
 def test_dark_flow_deterministic(tmp_path):

@@ -45,7 +45,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 #: Preset names accepted by ``render_viz(preset=...)``.
 AESTHETIC_PRESETS = ("dark_flow", "dark_glow", "paper_prism", "dark_strands")
@@ -195,6 +195,30 @@ def _flow_version() -> str:
         return "not-installed"
 
 
+def _autopilot():
+    """Import the survey-autopilot peer (lazy, optional, graceful fallback).
+
+    Returns the ``autopilot`` module when importable, else ``None``.
+    Callers degrade feature-by-feature to the pre-autopilot behavior
+    when this returns ``None`` — a missing peer never raises, never
+    silently changes a picture. Uses plain ``import autopilot`` plus
+    attribute access (not ``from autopilot.x import y``) so tests can
+    monkeypatch ``sys.modules["autopilot"]``.
+    """
+    try:
+        import autopilot
+        return autopilot
+    except ImportError:
+        return None
+
+
+def _autopilot_version() -> str:
+    ap = _autopilot()
+    if ap is None:
+        return "not-installed"
+    return str(getattr(ap, "__version__", "unknown"))
+
+
 # Default place kinds for automatic labels (the gazetteer's own default).
 _LABEL_KINDS = ("city", "town")
 
@@ -209,7 +233,9 @@ _DEFAULT_STRAND_LINEWIDTH = 1.4
 
 
 def _resolve_place_labels(place_labels: Any, spec,
-                          max_labels: int, min_population: int) -> Tuple[List[Dict[str, Any]], str]:
+                          max_labels: int, min_population: int,
+                          candidate_pool: Optional[int] = None
+                          ) -> Tuple[List[Dict[str, Any]], str]:
     """Resolve the reel's place labels ONCE (never per frame).
 
     Returns ``(label_dicts, mode)`` where each dict is
@@ -224,6 +250,12 @@ def _resolve_place_labels(place_labels: Any, spec,
       Each dict needs numeric ``x``/``y`` and a string ``text`` and
       must be JSON-serializable (it lands in the frame manifest, which
       is what the survey-cache fingerprint hashes).
+
+    ``candidate_pool`` (salience ranking): when set, the gazetteer
+    fetches this many candidates instead of ``max_labels`` — the
+    caller then ranks them (e.g. by the survey-autopilot salience
+    map) and applies the ``max_labels`` cut itself, so the ranking
+    decides which labels survive. ``mode`` is still ``"auto"``.
     """
     if place_labels is False:
         return [], "off"
@@ -270,7 +302,8 @@ def _resolve_place_labels(place_labels: Any, spec,
     lon0, lat0, lon1, lat1 = (float(v) for v in spec.bbox)
     labels = gz.labels_for_bbox(
         lon0, lon1, lat0, lat1,
-        max_labels=max_labels, min_population=min_population,
+        max_labels=(candidate_pool if candidate_pool else max_labels),
+        min_population=min_population,
         kinds=_LABEL_KINDS)
     return [dict(lb) for lb in labels], "auto"
 
@@ -780,6 +813,170 @@ def _robust_vmax(np, arr, pct: float = 99.0) -> float:
 
 
 # ---------------------------------------------------------------------------
+# survey-autopilot assists (optional peer; graceful fallback everywhere)
+#
+# Three first-pass knobs — robust color scales, area-proportional
+# strand counts, salience-ranked labels — each degrades to the
+# pre-autopilot behavior when the peer is absent. Manifest records
+# which path each render took (scale_method, strand_count_method,
+# label_ranking) so a first pass is always auditable.
+# ---------------------------------------------------------------------------
+
+def _resolve_strand_count(strand_count: Union[int, str],
+                          spec) -> Tuple[int, str]:
+    """Resolve ``render_viz(strand_count=...)`` to ``(count, method)``.
+
+    ``"auto"`` (the default) asks the survey-autopilot peer for an
+    area-proportional count for the spec's bbox; an int passes through
+    verbatim. ``method`` is ``"autopilot-area"`` / ``"explicit"`` /
+    ``"default-fallback"`` (peer absent — the historical 3000).
+    """
+    if isinstance(strand_count, str):
+        if strand_count.strip().lower() != "auto":
+            raise ValueError(
+                f"strand_count: expected 'auto' or a positive int, got "
+                f"{strand_count!r}")
+        ap = _autopilot()
+        if ap is not None:
+            try:
+                res = ap.density.strand_count_for_bbox(
+                    tuple(float(v) for v in spec.bbox))
+                count = int(res["count"])
+                if count > 0:
+                    return count, "autopilot-area"
+            except Exception:
+                # Importable but misbehaving — fall back honestly.
+                pass
+        return _DEFAULT_STRAND_COUNT, "default-fallback"
+    if isinstance(strand_count, bool) or not isinstance(strand_count, int):
+        raise ValueError(
+            f"strand_count: expected 'auto' or a positive int, got "
+            f"{strand_count!r}")
+    return strand_count, "explicit"
+
+
+def _resolve_scale_limits(np, values, spec,
+                          robust_scale: bool
+                          ) -> Tuple[float, float, Dict[str, Any]]:
+    """Reel-wide hue/scalar limits, honoring explicit spec.vmin/vmax.
+
+    Returns ``(vmin, vmax, info)`` where ``info`` records the method
+    for the manifest: ``"autopilot-p2-p98"`` (the survey-autopilot
+    robust p2/p98 limits — one outlier cell no longer washes out the
+    whole reel's colors), ``"minmax-fallback"`` (robust requested but
+    the peer is absent — legacy min/max), or ``"minmax"`` (robust off,
+    or both ends explicitly set so no data range is consulted at all).
+    Explicit ``spec.vmin``/``spec.vmax`` always win for the end they
+    set.
+    """
+    vmin_set = spec.vmin is not None
+    vmax_set = spec.vmax is not None
+    if vmin_set and vmax_set:
+        return (float(spec.vmin), float(spec.vmax),
+                {"method": "minmax", "percentiles": None})
+    ap = _autopilot() if robust_scale else None
+    used_autopilot = False
+    if ap is not None:
+        try:
+            lim = ap.scaling.robust_limits(values, lo_pct=2.0, hi_pct=98.0)
+            lo, hi = float(lim["vmin"]), float(lim["vmax"])
+            used_autopilot = True
+        except Exception:
+            # Importable but misbehaving — fall back honestly.
+            lo, hi = _nanminmax(np, values)
+    else:
+        lo, hi = _nanminmax(np, values)
+    if vmin_set:
+        lo = float(spec.vmin)
+    if vmax_set:
+        hi = float(spec.vmax)
+    if used_autopilot:
+        info = {"method": "autopilot-p2-p98", "percentiles": [2.0, 98.0]}
+    elif robust_scale:
+        info = {"method": "minmax-fallback", "percentiles": None}
+    else:
+        info = {"method": "minmax", "percentiles": None}
+    return lo, hi, info
+
+
+def _scale_manifest_keys(scale_info: Dict[str, Any]) -> Dict[str, Any]:
+    """Manifest keys for the resolved scale method.
+
+    ``scale_method`` is always recorded; ``scale_percentiles`` only
+    when the autopilot robust limits were actually used.
+    """
+    keys = {"scale_method": scale_info["method"]}
+    if scale_info["method"] == "autopilot-p2-p98":
+        keys["scale_percentiles"] = list(scale_info["percentiles"])
+    return keys
+
+
+#: Presets whose renders carry a vector flow field (speed +
+#: temperature grids) that salience ranking can use.
+_SALIENCE_PRESETS = ("dark_flow", "dark_strands")
+
+
+def _salience_pool(max_labels: int) -> int:
+    """Gazetteer candidate pool size when salience ranking is active.
+
+    A multiple of ``max_labels`` (floor 32, cap 256) so the salience
+    map — not the gazetteer's population order — decides which labels
+    survive the final cut. Bounded: a global bbox could otherwise
+    fetch thousands of places.
+    """
+    return min(max(4 * max_labels, 32), 256)
+
+
+def _time_mean(np, arr):
+    """NaN-aware time-mean of a (T, ny, nx) stack -> (ny, nx).
+
+    Salience ranking uses the time-mean, not any single timestep: a
+    label sitting on the reel's TYPICAL hotspot outranks one that only
+    flares in one frame. 2D input passes through unchanged.
+    """
+    a = np.asarray(arr, dtype=float)
+    if a.ndim == 3:
+        return np.nanmean(a, axis=0)
+    return a
+
+
+def _salience_speed_temp(spec, field):
+    """Speed + temperature grids for salience ranking, or ``None``.
+
+    Returns ``(speed, temp, lats, lons)`` — the full (T, ny, nx)
+    stacks — when the flow field genuinely carries BOTH a speed array
+    and a temperature array (currents with a temperature field; wind
+    with the air_temperature scalar). ``None`` means "no honest
+    salience signal": the caller keeps legacy label order rather than
+    ranking on a speed-only field.
+    """
+    var = spec.variable
+    if var == "currents":
+        temp = (field.get("temperature")
+                if isinstance(field, dict)
+                else getattr(field, "temperature", None))
+        if temp is None:
+            # _extract_flow's scalar falls back to current speed here —
+            # not a temperature field, so no honest salience signal.
+            return None
+        flow = _extract_flow(spec, field)
+        return flow["speed"], flow["scalar"], flow["lats"], flow["lons"]
+    if var == "wind":
+        # The warming.watch convention colors wind strands by air
+        # temperature — dark_strands already requires it on the field.
+        temp = (field.get("air_temperature")
+                if isinstance(field, dict)
+                else getattr(field, "air_temperature", None))
+        if temp is None:
+            return None
+        flow = _extract_flow(spec, field)
+        np = _np()
+        return (flow["speed"], np.asarray(temp, dtype=float),
+                flow["lats"], flow["lons"])
+    return None
+
+
+# ---------------------------------------------------------------------------
 # dark_flow: LIC streaks (currents / wind)
 # ---------------------------------------------------------------------------
 
@@ -856,14 +1053,11 @@ def _render_dark_flow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
     frame_idx = _bucket_indices(dates, spec.cadence)
 
     # Reel-wide fixed scales (never per-frame — that flickers).
-    if spec.vmin is not None and spec.vmax is not None:
-        vmin, vmax = float(spec.vmin), float(spec.vmax)
-    else:
-        vmin, vmax = _nanminmax(np, scalar)
-        if spec.vmin is not None:
-            vmin = float(spec.vmin)
-        if spec.vmax is not None:
-            vmax = float(spec.vmax)
+    # robust_scale (default): survey-autopilot p2/p98 limits when the
+    # peer is importable, legacy min/max otherwise (see
+    # _resolve_scale_limits). Explicit spec.vmin/vmax always win.
+    vmin, vmax, scale_info = _resolve_scale_limits(
+        np, scalar, spec, bool(ctx.get("robust_scale", True)))
     if not vmax > vmin:
         vmax = vmin + 1.0
     # Clean legend labels: data-derived scales are rounded to one
@@ -921,6 +1115,7 @@ def _render_dark_flow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
         "vmin": vmin, "vmax": vmax, "speed_max": speed_max,
         "scalar": f"{flow['scalar_label']} ({flow['scalar_unit']})",
         "underlay": underlay_status,
+        **_scale_manifest_keys(scale_info),
     }
     return frames, timestamps, render_info
 
@@ -991,14 +1186,11 @@ def _render_dark_strands(ctx: Dict[str, Any]
     frame_idx = _bucket_indices(dates, spec.cadence)
 
     # Reel-wide fixed scales (never per-frame — that flickers).
-    if spec.vmin is not None and spec.vmax is not None:
-        vmin, vmax = float(spec.vmin), float(spec.vmax)
-    else:
-        vmin, vmax = _nanminmax(np, scalar)
-        if spec.vmin is not None:
-            vmin = float(spec.vmin)
-        if spec.vmax is not None:
-            vmax = float(spec.vmax)
+    # robust_scale (default): survey-autopilot p2/p98 limits when the
+    # peer is importable, legacy min/max otherwise (see
+    # _resolve_scale_limits). Explicit spec.vmin/vmax always win.
+    vmin, vmax, scale_info = _resolve_scale_limits(
+        np, scalar, spec, bool(ctx.get("robust_scale", True)))
     if not vmax > vmin:
         vmax = vmin + 1.0
     if spec.vmin is None:
@@ -1183,6 +1375,7 @@ def _render_dark_strands(ctx: Dict[str, Any]
         "scalar": f"{scalar_label} ({scalar_unit})",
         "scalar_name": scalar_name,
         "bivariate": bivariate,
+        **_scale_manifest_keys(scale_info),
         # Reel-wide fixed speed scale for the brightness channel (m/s):
         # 99th percentile, not the raw max (see _robust_vmax).
         "speed_vmin": speed_vmin,
@@ -1559,10 +1752,16 @@ def render_preset_viz(
     max_labels: int = 8,
     min_population: int = 0,
     basemap: Optional[str] = None,
-    strand_count: int = _DEFAULT_STRAND_COUNT,
+    strand_count: Union[int, str] = "auto",
     strand_linewidth: float = _DEFAULT_STRAND_LINEWIDTH,
     landmask: bool = True,
     bivariate: bool = True,
+    robust_scale: bool = True,
+    salience_labels: bool = True,
+    # Set by render_viz when it pre-resolves strand_count="auto" to an
+    # int (see _resolve_strand_count); direct callers leave it None and
+    # the resolution happens here. Internal plumbing, not a user knob.
+    strand_count_method: Optional[str] = None,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec through a survey-aesthetics preset.
 
@@ -1606,8 +1805,10 @@ def render_preset_viz(
             ``None`` (default) keeps the preset's bundled style.
             Unknown names fail fast.
         strand_count: particle count per frame for the ``dark_strands``
-            preset (default 3000; the engine's cost note: ~1.3 s/frame
-            at 4000). Preset-path only.
+            preset — ``"auto"`` (default) asks the survey-autopilot
+            peer for an area-proportional count for the region bbox
+            (falls back to the old 3000 default when the peer is
+            absent); a positive int is used verbatim. Preset-path only.
         strand_linewidth: strand width in points for ``dark_strands``
             (default 1.4; 1–2 reads hair-like at 1080x1920).
             Preset-path only.
@@ -1625,6 +1826,29 @@ def render_preset_viz(
             ``speed_vmin``/``speed_vmax``). ``False`` restores the
             single-variable flat look (no brightness channel, old
             encoding line). Preset-path only.
+        robust_scale: ``dark_flow``/``dark_strands`` hue (temperature)
+            color limits (default True): the survey-autopilot robust
+            p2/p98 limits instead of the raw data min/max — a single
+            outlier cell no longer washes out the whole reel's colors.
+            Explicit ``spec.vmin``/``spec.vmax`` always win. When the
+            peer is absent, or with ``robust_scale=False``, the legacy
+            min/max scale is used. The manifest records
+            ``scale_method`` (``"autopilot-p2-p98"`` /
+            ``"minmax-fallback"`` / ``"minmax"``) plus
+            ``scale_percentiles`` when the peer was used. The
+            bivariate p99 brightness channel is untouched — this only
+            affects the hue scale. Preset-path only.
+        salience_labels: automatic place labels on the flow presets
+            (default True): when the flow field carries speed AND
+            temperature grids, candidate labels are ranked by the
+            survey-autopilot salience map — built from the TIME-MEAN
+            speed/temperature grids, so the reel's typical hotspot
+            outranks a single-frame flare — BEFORE the ``max_labels``
+            cut, so salience decides which labels survive. When the
+            peer is absent, or labels are explicit/off, the gazetteer
+            order is kept verbatim. The manifest records
+            ``place_labels.label_ranking`` (``"autopilot-salience"`` /
+            ``"legacy"``). Preset-path only.
 
     Returns ``(frames, manifest_path)`` like :func:`viz.render.render_viz`.
     """
@@ -1674,9 +1898,18 @@ def render_preset_viz(
                 f"{ae.list_basemaps()} or None for the preset default"
             ) from exc
         basemap_name = basemap_style.name
-    if strand_count <= 0:
+    if isinstance(strand_count, str):
+        # render_viz resolves "auto" before dispatching; a direct
+        # caller may still pass it — resolve here identically.
+        strand_count, strand_count_method = _resolve_strand_count(
+            strand_count, spec)
+    elif strand_count_method is None:
+        strand_count_method = "explicit"
+    if (not isinstance(strand_count, int)
+            or isinstance(strand_count, bool) or strand_count <= 0):
         raise ValueError(
-            f"strand_count must be positive, got {strand_count!r}")
+            f"strand_count must be 'auto' or a positive int, got "
+            f"{strand_count!r}")
     if not strand_linewidth > 0:
         raise ValueError(
             f"strand_linewidth must be positive, got {strand_linewidth!r}")
@@ -1692,8 +1925,50 @@ def render_preset_viz(
     # Place labels: resolved ONCE per reel from the north-up bbox, then
     # projected onto the final furniture-canvas fractions (upright after
     # rotation). Reel-static, so the same list rides every frame.
+    #
+    # Salience ranking (survey-autopilot, optional): on the flow
+    # presets with automatic labels, fetch a candidate pool instead of
+    # the final cut, then rank candidates by the salience map BEFORE
+    # the max_labels cut — salience decides which labels survive.
+    # Without the peer (or without speed+temperature grids, or with
+    # explicit/off labels) the gazetteer order is kept verbatim.
+    want_salience = (
+        salience_labels and place_labels is True
+        and preset in _SALIENCE_PRESETS
+        and isinstance(max_labels, int) and not isinstance(max_labels, bool)
+        and max_labels > 0 and _autopilot() is not None)
     label_dicts, label_mode = _resolve_place_labels(
-        place_labels, spec, max_labels, min_population)
+        place_labels, spec, max_labels, min_population,
+        candidate_pool=_salience_pool(max_labels) if want_salience else None)
+    label_ranking = "legacy"
+    if want_salience and label_mode == "auto" and label_dicts:
+        try:
+            salience_inputs = _salience_speed_temp(spec, field)
+            ap = _autopilot()
+            if ap is not None and salience_inputs is not None:
+                # The salience map is built from the TIME-MEAN speed
+                # and temperature grids (see _time_mean): the reel's
+                # typical hotspot outranks a single-frame flare.
+                speed, temp, slats, slons = salience_inputs
+                sal_map = ap.salience.salience_map(
+                    _time_mean(np, speed), _time_mean(np, temp))
+                candidates = [{"name": str(lb["text"]),
+                               "lon": float(lb["x"]),
+                               "lat": float(lb["y"]),
+                               "_orig": lb}
+                              for lb in label_dicts]
+                ranked = ap.salience.rank_label_positions(
+                    candidates, sal_map,
+                    np.asarray(slats, dtype=float),
+                    np.asarray(slons, dtype=float))
+                label_dicts = [r["_orig"] for r in ranked[:max_labels]]
+                label_ranking = "autopilot-salience"
+        except Exception:
+            # The optional peer misbehaved — degrade to the gazetteer
+            # order (the pool cut to max_labels) rather than failing a
+            # render.
+            label_dicts = label_dicts[:max_labels]
+            label_ranking = "legacy"
     canvas_labels = _project_labels_to_final(
         label_dicts, spec.bbox, angle, render_size)
 
@@ -1747,6 +2022,7 @@ def render_preset_viz(
         "strand_linewidth": strand_linewidth,
         "landmask": landmask,
         "bivariate": bivariate,
+        "robust_scale": robust_scale,
         "place_canvas_labels": canvas_labels,
     }
 
@@ -1781,6 +2057,7 @@ def render_preset_viz(
             "encoding_line": encoding_line,
             "basemap": basemap_name,
             "strand_count": strand_count,
+            "strand_count_method": strand_count_method,
             "strand_linewidth": strand_linewidth,
             "bivariate": bivariate,
             "furniture": {
@@ -1792,6 +2069,7 @@ def render_preset_viz(
             "n_frames": len(frames),
             "place_labels": {
                 "mode": label_mode,  # "auto" | "explicit" | "off"
+                "label_ranking": label_ranking,  # "autopilot-salience" | "legacy"
                 "max_labels": max_labels,
                 "min_population": min_population,
                 "kinds": list(_LABEL_KINDS),

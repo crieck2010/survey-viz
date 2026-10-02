@@ -55,7 +55,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from . import __version__
 from .gazetteer import get_region
@@ -714,10 +714,12 @@ def render_viz(
     max_labels: int = 8,
     min_population: int = 0,
     basemap: Optional[str] = None,
-    strand_count: int = 3000,
+    strand_count: Union[int, str] = "auto",
     strand_linewidth: float = 1.4,
     landmask: bool = True,
     bivariate: bool = True,
+    robust_scale: bool = True,
+    salience_labels: bool = True,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -789,6 +791,35 @@ def render_viz(
     set. Labels are drawn upright with the rest of the furniture after
     rotation, and are recorded (JSON-serializable) in the frame
     manifest for the survey-cache fingerprint.
+
+    ``strand_count`` is ``"auto"`` (default) or a positive int:
+    ``"auto"`` asks the survey-autopilot peer for an area-proportional
+    particle count for the region bbox (falling back to the old 3000
+    default when the peer is absent); an int is used verbatim.
+    Resolved to an int before the preset path dispatches. Preset-path
+    only.
+
+    ``robust_scale`` (default True) makes the ``dark_flow`` /
+    ``dark_strands`` hue (temperature) color limits the survey-autopilot
+    robust p2/p98 limits instead of the raw data min/max — a single
+    outlier cell no longer washes out the whole reel's colors.
+    Explicit ``spec.vmin``/``spec.vmax`` always win. When the peer is
+    absent, or with ``robust_scale=False``, the legacy min/max scale is
+    used; the manifest records ``scale_method``
+    (``"autopilot-p2-p98"`` / ``"minmax-fallback"`` / ``"minmax"``)
+    plus ``scale_percentiles`` when the peer was used. The bivariate
+    p99 brightness channel is untouched. Preset-path only.
+
+    ``salience_labels`` (default True) ranks automatic place labels on
+    the flow presets by the survey-autopilot salience map — built from
+    the TIME-MEAN speed/temperature grids, so the reel's typical
+    hotspot outranks a single-frame flare — BEFORE the ``max_labels``
+    cut, so salience decides which labels survive. Requires labels in
+    ``"auto"`` mode and a flow field carrying speed AND temperature
+    grids; when the peer is absent, or labels are explicit/off, the
+    gazetteer order is kept verbatim. The manifest records
+    ``place_labels.label_ranking`` (``"autopilot-salience"`` /
+    ``"legacy"``). Preset-path only.
     """
     if layout != "reel-vertical":
         raise ValueError(f"Unknown layout: {layout!r} (only 'reel-vertical' in v0.1.0)")
@@ -801,18 +832,20 @@ def render_viz(
         preset is not None or rotation is not None
         or watermark is not None or subtitle is not None
         or encoding_line is not True or basemap is not None
-        or strand_count != 3000 or strand_linewidth != 1.4
+        or strand_count != "auto" or strand_linewidth != 1.4
         # An explicit label list, or non-default label tuning, only has
         # meaning on the preset path. (place_labels=False and the
         # default True are no-ops on the legacy renderer.)
         or (isinstance(place_labels, (list, tuple)) and len(place_labels) > 0)
-        or max_labels != 8 or min_population != 0 or bivariate is not True)
+        or max_labels != 8 or min_population != 0 or bivariate is not True
+        or robust_scale is not True or salience_labels is not True)
     if preset_requested:
         if preset is None:
             raise ValueError(
                 "rotation/watermark/subtitle/encoding_line/basemap/"
                 "strand_count/strand_linewidth/place_labels/"
-                "max_labels/min_population/bivariate need "
+                "max_labels/min_population/bivariate/robust_scale/"
+                "salience_labels need "
                 "preset='dark_flow'/'dark_glow'/'paper_prism'/'dark_strands' "
                 "— they are preset-path options with no meaning on the "
                 "legacy renderer")
@@ -824,8 +857,13 @@ def render_viz(
             raise ValueError(
                 "canvas (platform safe zones) is a legacy-path feature; "
                 "the preset path uses its own layout grammar")
-        from .aesthetic_render import render_preset_viz
+        from .aesthetic_render import render_preset_viz, _resolve_strand_count
         want_underlay = underlay if underlay is not None else bool(spec.underlay)
+        # "auto" strand counts resolve to an int BEFORE dispatching;
+        # downstream keeps a plain int (plus the method for the
+        # manifest). An int passes through verbatim.
+        strand_count, strand_count_method = _resolve_strand_count(
+            strand_count, spec)
         return render_preset_viz(
             spec, field, out_dir, preset=preset, rotation=rotation,
             watermark=watermark, subtitle=subtitle,
@@ -833,8 +871,10 @@ def render_viz(
             cmap=cmap, style=style, place_labels=place_labels,
             max_labels=max_labels, min_population=min_population,
             basemap=basemap, strand_count=strand_count,
+            strand_count_method=strand_count_method,
             strand_linewidth=strand_linewidth, landmask=landmask,
-            bivariate=bivariate)
+            bivariate=bivariate, robust_scale=robust_scale,
+            salience_labels=salience_labels)
     style = style or spec.style
     if style not in _STYLE:
         raise ValueError(f"Unknown style: {style!r} (expected one of {sorted(_STYLE)})")

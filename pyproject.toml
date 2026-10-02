@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "survey-viz"
-version = "0.26.1"
+version = "0.27.0"
 description = "Plain-English descriptions to vertical map frame sequences: deterministic parser, spec, and offline renderer."
 readme = "README.md"
 license = { text = "MIT" }
@@ -36,6 +36,12 @@ aesthetics = [
   "survey-aesthetics @ git+https://github.com/crieck2010/survey-aesthetics@v0.3.0",
   "survey-gazetteer @ git+https://github.com/crieck2010/survey-gazetteer@v0.1.0",
   "survey-flow @ git+https://github.com/crieck2010/survey-flow@v0.1.0",
+]
+# Automatic first-pass assists via the survey-autopilot peer engine
+# (optional; render_viz degrades each knob to its legacy behavior when
+# the peer is absent — graceful fallback, never a hard dependency).
+autopilot = [
+  "survey-autopilot @ git+https://github.com/crieck2010/survey-autopilot@v0.1.0",
 ]
 
 [project.scripts]

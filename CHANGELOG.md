@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-10-01
+
+### Added
+- Automatic first-pass assists via the survey-autopilot peer engine
+  (optional; new `autopilot` extra). Three knobs on the preset path,
+  each degrading to its legacy behavior when the peer is absent —
+  never a crash — with the manifest recording which path was taken:
+  - `robust_scale: bool = True` (new `render_viz` / `render_preset_viz`
+    kwarg): the `dark_flow` / `dark_strands` hue (temperature) color
+    limits are the autopilot robust p2/p98 limits
+    (`autopilot.scaling.robust_limits`, percentiles 2.0/98.0) instead
+    of the raw data min/max, so a single outlier cell no longer
+    washes out the whole reel's colors. Explicit `spec.vmin`/`vmax`
+    always win. `robust_scale=False` restores pure min/max. Manifest:
+    `scale_method` (`"autopilot-p2-p98"` / `"minmax-fallback"` /
+    `"minmax"`) plus `scale_percentiles` when the peer was used. The
+    bivariate p99 brightness channel is untouched.
+  - `strand_count="auto"` (new default; an int still passes through
+    verbatim): resolves via
+    `autopilot.density.strand_count_for_bbox(spec.bbox)` to an
+    area-proportional count (peer floor 500, ceiling 6000), falling
+    back to the old 3000 default without the peer. Resolved to an int
+    inside `render_viz` before the preset path dispatches. Manifest:
+    `strand_count_method` (`"autopilot-area"` / `"explicit"` /
+    `"default-fallback"`) plus the resolved `strand_count`.
+  - `salience_labels: bool = True` (new kwarg): on the flow presets,
+    when labels are automatic AND the flow field carries speed and
+    temperature grids, candidates are fetched as a pool (4x
+    `max_labels`, floor 32, cap 256) and ranked by
+    `autopilot.salience.salience_map` — built from the TIME-MEAN
+    speed/temperature grids, so the reel's typical hotspot outranks a
+    single-frame flare — BEFORE the `max_labels` cut, so salience
+    decides which labels survive. Without the peer, or with
+    explicit/off labels, the gazetteer order is kept verbatim.
+    Manifest: `place_labels.label_ranking` (`"autopilot-salience"` /
+    `"legacy"`).
+- All three knobs are preset-path only: passing a non-default value
+  without `preset=` fails fast with the existing "needs preset"
+  error. The legacy renderer is byte-identical.
+
 ## [0.26.1] - 2026-10-01
 
 ### Fixed

@@ -152,7 +152,8 @@ frames, manifest = render_viz(
     rotation="auto",          # optimal frame rotation for the region bbox
     watermark="your_handle",  # opt-in brand furniture (off by default)
     basemap="void_black",     # or "no_basemap" / "subtle_land" (None = preset default)
-    strand_count=3000,        # dark_strands only: particles per frame
+    strand_count="auto",      # dark_strands only: "auto" (default) = area-proportional
+                              # via survey-autopilot, or an explicit int (e.g. 3000)
     strand_linewidth=1.4,     # dark_strands only: strand width in points
     place_labels=True,        # auto place labels via the survey-gazetteer
                               # peer (default); False = off, or pass an
@@ -169,6 +170,32 @@ counter, date dial, vertical scale bar), fixed reel-wide color scales
 ("BRIGHTNESS = SPEED"). `preset=None` (default) keeps the legacy
 renderer byte-identical. See `docs/AESTHETICS.md` for the full
 contract, including honest limits.
+
+### Automatic first-pass (survey-autopilot)
+
+The preset path applies three first-pass assists from the
+survey-autopilot peer engine, so the reel looks right before any
+manual refinement. The peer is OPTIONAL (`pip install
+"survey-viz[autopilot]"`) — when it is absent, every knob degrades to
+its old behavior, never a crash, and the manifest records which path
+each render took:
+
+| Knob | Default | With the peer | Without the peer |
+|---|---|---|---|
+| `robust_scale` | `True` | hue (temperature) limits = robust p2/p98 percentiles; one outlier cell can't wash out the reel | legacy min/max (`scale_method: "minmax-fallback"`) |
+| `strand_count` | `"auto"` | area-proportional count for the region bbox (peer floor 500, ceiling 6000) | the old 3000 default |
+| `salience_labels` | `True` | auto labels ranked by the salience map (time-mean speed × temperature anomaly) before the `max_labels` cut | gazetteer order, verbatim |
+
+Rules: explicit `spec.vmin`/`spec.vmax` always beat the robust
+scale; an explicit `strand_count` int is used verbatim;
+`salience_labels` only applies to automatic labels on the flow
+presets (`dark_flow`/`dark_strands`) when the field carries genuine
+speed AND temperature grids (a speed-only field keeps legacy order —
+never a guess). All three knobs are preset-path only and fail fast
+without `preset=`. Manifest keys: `scale_method` (+
+`scale_percentiles` when the peer was used), `strand_count_method`,
+`place_labels.label_ranking`. The bivariate p99 brightness channel is
+untouched by `robust_scale`.
 
 ## Parser rules (summary)
 

@@ -347,12 +347,14 @@ class TestLegacyRegression:
         # The new render_viz params default to the legacy behavior:
         # preset=None still renders the legacy path (no PeerMissing),
         # and the new kwargs at defaults reproduce legacy output.
+        # (v0.27.0: the strand_count default is now "auto" — an
+        # explicit int is a preset-path option by design.)
         spec, field = _spec(), self._scalar_field()
         a, _ = render_viz(spec, field, None, out_dir=tmp_path / "a",
                           underlay=False)
         b, _ = render_viz(spec, field, None, out_dir=tmp_path / "b",
                           underlay=False, preset=None, basemap=None,
-                          strand_count=3000, strand_linewidth=1.4)
+                          strand_count="auto", strand_linewidth=1.4)
         assert len(a) == len(b) > 0
         for fa, fb in zip(a, b):
             assert _png_bytes(fa) == _png_bytes(fb), (
