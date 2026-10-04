@@ -145,10 +145,11 @@ from viz import render_viz
 
 # LIC flow streaks on black (currents/wind), event glow (quakes/storms),
 # 3D prism extrusion on paper (gridded variables like precipitation),
-# or advected particle strands on black (currents/wind).
+# advected particle strands on black (currents/wind), or a colored
+# scalar surface over a shadowed land silhouette (any gridded variable).
 frames, manifest = render_viz(
     spec, field, None, out_dir="frames",
-    preset="dark_flow",       # or "dark_glow" / "paper_prism" / "dark_strands"
+    preset="dark_flow",       # or "dark_glow" / "paper_prism" / "dark_strands" / "surface"
     rotation="auto",          # optimal frame rotation for the region bbox
     watermark="your_handle",  # opt-in brand furniture (off by default)
     basemap="void_black",     # or "no_basemap" / "subtle_land" (None = preset default)
@@ -170,6 +171,39 @@ counter, date dial, vertical scale bar), fixed reel-wide color scales
 ("BRIGHTNESS = SPEED"). `preset=None` (default) keeps the legacy
 renderer byte-identical. See `docs/AESTHETICS.md` for the full
 contract, including honest limits.
+
+#### Surface preset, animated counter, headline beats
+
+```python
+frames, manifest = render_viz(
+    spec, field, None, out_dir="frames", preset="surface",
+    surface_scale="log",        # density-like data; "linear" (default) otherwise
+    surface_contours=True, surface_shadow=True, surface_smoothing=0.0,
+    counter={"stat": "sum", "unit": "people", "label": "TOTAL"},
+    headline_beats=[(0.0, "Where Italy lives"), (0.6, "The north pulls ahead")],
+)
+```
+
+`surface` (v0.28.0) renders any continuous gridded variable as a
+colored surface over a shadowed land/footprint silhouette via
+survey-aesthetics v0.4.0 `render_surface`, default cmap `teal_pink`,
+with a reel-wide fixed color scale and north-up orientation.
+`surface_scale="log"` suits density-like data spanning orders of
+magnitude (non-positive cells are no-data; the colorbar gains decade
+ticks); `surface_smoothing` is a Gaussian sigma in output pixels
+(NaN-aware). When `render_surface` is unavailable (peer < 0.4.0) the
+preset falls back to a plain colormapped grid and records
+`surface.peer_fallback` in the manifest — never a crash.
+
+The `counter` (surface only) shows a big date readout with a
+per-timestep NaN-aware stat (`sum`/`mean`/`max` over finite cells)
+beneath it, linearly interpolated between bracketing timesteps —
+**between observed timesteps the counter shows linearly interpolated
+estimates, not measurements**. `headline_beats` (any preset) swaps
+the title with a clean cut at each `(fraction-or-ISO-timestamp,
+text)` beat; beats are plain data (survey-narrate v0.2.0 can draft
+them upstream — viz never imports it). The manifest records
+`render.surface`, `render.counter`, and `render.headline_beats`.
 
 ### Automatic first-pass (survey-autopilot)
 

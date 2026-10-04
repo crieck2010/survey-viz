@@ -1,8 +1,8 @@
 # Aesthetic presets (mapped.earth look)
 
 `render_viz(..., preset=...)` renders through the **survey-aesthetics**
-peer engine (v0.2.0+) instead of the standard matplotlib data map. The
-four presets reproduce the visual system of mapped.earth reference
+peer engine (v0.2.0+; `surface` needs v0.4.0+) instead of the standard matplotlib data map. The
+five presets reproduce the visual system of mapped.earth reference
 reels: chrome-free full-bleed frames, editorial typography, custom
 legends, and an explicit statement of what is encoded.
 
@@ -14,6 +14,7 @@ legends, and an explicit statement of what is encoded.
 | `dark_glow` | additive event glow with bloom on black | `earthquakes`, `storm-tracks` | `glow_from_grid` over splatted disks |
 | `paper_prism` | 3D prism extrusion on warm paper; height = value | any continuous gridded variable (`tp` is the reference case) | `prism_frame` |
 | `dark_strands` | advected hair-like particle strands on black; color = temperature | `currents`, `wind` | `render_strands` over survey-flow trails |
+| `surface` | colored scalar surface over a shadowed land/footprint silhouette; default cmap `teal_pink` | any continuous gridded variable | `render_surface` (survey-aesthetics v0.4.0+) |
 
 A preset on a variable without the data it needs is a `ValueError`
 with the reason — never a silently wrong picture.
@@ -89,6 +90,82 @@ frames, manifest = render_viz(
     strand_count=4000, strand_linewidth=1.2,
 )
 ```
+
+### surface details
+
+The mapped.earth "where X lives" look: the scalar field is rendered
+as a smooth colored surface floating over a soft drop shadow of the
+land (or, without a land mask, of the finite-cell footprint), on a
+near-black teal background. NaN cells are honest gaps — never
+interpolated over; NaN-on-land renders flat grey when a land mask is
+available.
+
+* Default cmap is `teal_pink` (the survey-aesthetics v0.4.0
+  registered ramp: dark teal → bright aqua → pink); the existing
+  `cmap=` override accepts any matplotlib name.
+* `surface_scale="log"` is for density-like data spanning orders of
+  magnitude (population, detections): non-positive cells become
+  no-data, and the gradient-bar colorbar gains decade ticks.
+  `"linear"` (default) otherwise. Unknown scales raise `ValueError`.
+* `surface_contours=True` (default) draws thin data contours;
+  `surface_contour_levels=None` means auto levels.
+  `surface_shadow=True` (default) draws the drop shadow.
+  `surface_smoothing` is a Gaussian sigma in output pixels (0 = off;
+  NaN-aware, so smoothing never bleeds data into gaps).
+* The color scale is reel-wide FIXED vmin/vmax computed once from the
+  whole stack (positive-finite values only for log) — explicit
+  `spec.vmin`/`vmax` win. Per-frame scales would flicker.
+* Grids are oriented north-up (row 0 = top) before rendering:
+  ascending lats are flipped, descending lats pass through.
+* Frames are the observed timesteps picked by the usual cadence
+  bucketing — no intermediate grids are invented. Only the counter
+  (below) interpolates, and only its scalar stat.
+* Old-peer fallback: when `render_surface` is unavailable
+  (survey-aesthetics < 0.4.0) the preset renders a plain colormapped
+  grid (no contours, no shadow) and the manifest records
+  `render.surface.peer_fallback: true`.
+
+#### Animated counter (surface only)
+
+```python
+frames, manifest = render_viz(
+    spec, field, None, out_dir="frames", preset="surface",
+    counter={"stat": "sum", "unit": "people", "label": "TOTAL"},
+)
+```
+
+`stat` is `"sum"` / `"mean"` / `"max"` over finite cells only,
+computed per timestep. The value shown at each frame is linearly
+interpolated between the bracketing timesteps' stats (clamped before
+the first / after the last; an all-NaN timestep contributes nothing).
+The display is a big date/timestamp readout with the formatted stat
+(thousands separators; integers for large/integral values, up to 3
+significant decimals otherwise) + unit + label beneath it.
+**Between observed timesteps the counter shows linearly
+interpolated estimates, not measurements.** Passed with any other
+preset, `counter` is recorded in the manifest as
+requested-but-not-applied and nothing is drawn.
+
+#### Headline beats (any preset)
+
+```python
+frames, manifest = render_viz(
+    spec, field, None, out_dir="frames", preset="surface",
+    headline_beats=[(0.0, "Where Italy lives"),
+                    (0.6, "The north pulls ahead")],
+)
+```
+
+Each beat is `(when, text)`: `when` is a float fraction in [0, 1] of
+the reel (`frame = round(fraction * (n_frames - 1))`) or an ISO-8601
+timestamp string (nearest frame at/after it, clamped to the reel).
+The title swaps with a **clean cut** at each beat — the default
+`spec.title` shows until the first beat; beats are sorted by frame
+and a later-listed beat wins a shared frame. Beats are plain data:
+survey-viz never imports survey-narrate, but reel-studio can draft
+them with `narrate.headline_beats(facts)` (survey-narrate v0.2.0)
+and pass the list in. The manifest records the normalized beats as
+`render.headline_beats` (`{fraction, frame, text}`).
 
 ## Fixed scales (no flicker)
 

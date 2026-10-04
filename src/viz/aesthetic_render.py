@@ -18,6 +18,12 @@ Presets and the variables they support::
                 ``earthquakes`` (cumulative epicenters), ``storm-tracks``
     paper_prism 3D prism extrusion on warm paper (height = value):
                 any continuous gridded variable (``tp`` is the reference case)
+    surface     colored scalar surface over a shadowed land/footprint
+                silhouette (survey-aesthetics v0.4.0 ``render_surface``):
+                any continuous gridded variable; default cmap
+                ``teal_pink``, optional log scale, contours and drop
+                shadow. Falls back to a plain colormapped grid when
+                ``render_surface`` is unavailable (peer < 0.4.0).
 
 Honest rules this module enforces (it never guesses):
 
@@ -48,16 +54,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 #: Preset names accepted by ``render_viz(preset=...)``.
-AESTHETIC_PRESETS = ("dark_flow", "dark_glow", "paper_prism", "dark_strands")
+AESTHETIC_PRESETS = ("dark_flow", "dark_glow", "paper_prism", "dark_strands",
+                     "surface")
 
 #: Variables each preset can render. ``None`` means "any continuous
 #: gridded variable" (the paper_prism case — height = value works for
-#: any scalar field).
+#: any scalar field; the surface case — a colored scalar surface works
+#: for any scalar field).
 PRESET_VARIABLES: Dict[str, Optional[Tuple[str, ...]]] = {
     "dark_flow": ("currents", "wind"),
     "dark_glow": ("earthquakes", "storm-tracks"),
     "paper_prism": None,
     "dark_strands": ("currents", "wind"),
+    "surface": None,
 }
 
 #: Basemap styles accepted by ``render_viz(basemap=...)``. ``None``
@@ -217,6 +226,386 @@ def _autopilot_version() -> str:
     if ap is None:
         return "not-installed"
     return str(getattr(ap, "__version__", "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# surface preset + animated counter + headline beats (v0.28.0)
+#
+# Viz does NOT depend on survey-narrate: headline beats arrive as plain
+# ``(when, text)`` data from any source (reel-studio may draft them
+# with ``narrate.headline_beats``). The counter is plain data too.
+# ---------------------------------------------------------------------------
+
+#: Counter statistics accepted by ``render_viz(counter={"stat": ...})``.
+_COUNTER_STATS = ("sum", "mean", "max")
+
+
+def _render_surface_fn(ae) -> Any:
+    """Return the peer's ``render_surface`` callable, or ``None``.
+
+    Capability check for the graceful fallback: aesthetics < 0.4.0 has
+    no ``render_surface``. Tests can monkeypatch this helper (or delete
+    ``aesthetics.render_surface``) to exercise the fallback path.
+    """
+    fn = getattr(ae, "render_surface", None)
+    return fn if callable(fn) else None
+
+
+def _has_render_surface(ae) -> bool:
+    return _render_surface_fn(ae) is not None
+
+
+def _surface_preset_obj(ae):
+    """Preset object for ``surface`` (local until the engine bundles one).
+
+    survey-aesthetics 0.4.0 ships ``render_surface`` but no ``surface``
+    entry in ``get_preset``; build a Preset-shaped bundle locally with
+    the surface look: near-black teal background (matching
+    ``render_surface``'s default background), ``teal_pink`` cmap,
+    white editorial text. If a future engine bundles its own surface
+    preset, that one wins.
+    """
+    try:
+        return ae.get_preset("surface")
+    except Exception:
+        pass
+    # Construct the engine's own Preset dataclass when importable so
+    # attribute access behaves exactly like the bundled presets.
+    try:
+        from aesthetics.presets import Preset as _Preset
+        from aesthetics.basemap import VOID_BLACK as _VOID
+        return _Preset(
+            name="surface",
+            background="black",
+            bg_rgb=(0.012, 0.043, 0.055),
+            cmap="teal_pink",
+            text_color="white",
+            muted_color="#9aa0aa",
+            encoding="COLOR = VALUE",
+            legend_layout={
+                "title": (0.06, 0.94),
+                "subtitle": (0.06, 0.875),
+                "gradient_bar": (0.60, 0.20, 0.30, 0.012),
+                "timeline": (0.60, 0.28, 0.30, 0.010),
+                "counter": (0.06, 0.16),
+                "north_arrow": (0.06, 0.80),
+            },
+            basemap=_VOID,
+        )
+    except Exception:
+        import types
+        return types.SimpleNamespace(
+            name="surface", background="black",
+            bg_rgb=(0.012, 0.043, 0.055), cmap="teal_pink",
+            text_color="white", muted_color="#9aa0aa",
+            title_size=64, subtitle_size=26, readout_size=20,
+            encoding="COLOR = VALUE",
+            legend_layout={
+                "title": (0.06, 0.94),
+                "subtitle": (0.06, 0.875),
+                "gradient_bar": (0.60, 0.20, 0.30, 0.012),
+                "timeline": (0.60, 0.28, 0.30, 0.010),
+                "counter": (0.06, 0.16),
+                "north_arrow": (0.06, 0.80),
+            },
+            basemap=None,
+        )
+
+
+def _validate_counter(counter: Any) -> Optional[Dict[str, Any]]:
+    """Validate a ``counter`` spec; return a plain dict copy or None."""
+    if counter is None:
+        return None
+    if not isinstance(counter, dict):
+        raise ValueError(
+            f"counter: expected None or a dict like "
+            f"{{'stat': 'sum', 'unit': 'people', 'label': 'TOTAL'}}, "
+            f"got {counter!r}")
+    stat = counter.get("stat")
+    if stat not in _COUNTER_STATS:
+        raise ValueError(
+            f"counter['stat']: expected one of {list(_COUNTER_STATS)}, "
+            f"got {stat!r}")
+    out: Dict[str, Any] = {"stat": stat}
+    for key in ("unit", "label"):
+        val = counter.get(key)
+        if val is not None:
+            if not isinstance(val, str):
+                raise ValueError(
+                    f"counter[{key!r}]: expected a string, got {val!r}")
+            out[key] = val
+    return out
+
+
+def _validate_headline_beats(headline_beats: Any) -> List[Tuple[Any, str]]:
+    """Validate raw ``headline_beats``; return [(when, text), ...].
+
+    ``when`` is a float fraction in [0, 1] of the reel, or an ISO-8601
+    timestamp string. Text must be a non-empty string. Timestamp
+    strings are only *parsed* here (frame assignment needs the reel's
+    frame times, which each preset renderer knows); an unparseable
+    timestamp is a ValueError here, before any frame renders.
+    """
+    if headline_beats is None:
+        return []
+    if not isinstance(headline_beats, (list, tuple)):
+        raise ValueError(
+            f"headline_beats: expected None or a list of (when, text) "
+            f"pairs, got {headline_beats!r}")
+    out: List[Tuple[Any, str]] = []
+    for i, item in enumerate(headline_beats):
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ValueError(
+                f"headline_beats[{i}]: expected a (when, text) pair, "
+                f"got {item!r}")
+        when, text = item
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(
+                f"headline_beats[{i}]: text must be a non-empty string, "
+                f"got {text!r}")
+        if isinstance(when, bool):
+            raise ValueError(
+                f"headline_beats[{i}]: 'when' must be a fraction in "
+                f"[0, 1] or an ISO-8601 timestamp, got {when!r}")
+        if isinstance(when, (int, float)):
+            frac = float(when)
+            if not (0.0 <= frac <= 1.0):
+                raise ValueError(
+                    f"headline_beats[{i}]: fraction must be in [0, 1], "
+                    f"got {when!r}")
+            out.append((frac, text))
+        elif isinstance(when, str):
+            _parse_beat_timestamp(when, i)
+            out.append((when, text))
+        else:
+            raise ValueError(
+                f"headline_beats[{i}]: 'when' must be a fraction in "
+                f"[0, 1] or an ISO-8601 timestamp string, got {when!r}")
+    return out
+
+
+def _parse_beat_timestamp(text: str, idx: int = 0) -> _dt.datetime:
+    """Parse an ISO-8601 beat timestamp (aware UTC); ValueError if bad."""
+    raw = str(text).strip()
+    try:
+        parsed = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            d = _dt.date.fromisoformat(raw[:10])
+            parsed = _dt.datetime(d.year, d.month, d.day)
+        except ValueError:
+            raise ValueError(
+                f"headline_beats[{idx}]: unparseable timestamp "
+                f"{text!r}; expected ISO-8601 (e.g. '2026-09-16T00:00:00Z' "
+                f"or '2026-09-16')") from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+    return parsed
+
+
+def _normalize_headline_beats(headline_beats: Any, n_frames: int,
+                              frame_times: Any = None
+                              ) -> List[Dict[str, Any]]:
+    """Normalize raw beats to [{fraction, frame, text}, ...] for a reel.
+
+    Fraction beats: ``frame = round(fraction * (n_frames - 1))``.
+    Timestamp beats: the nearest frame at/after the timestamp (the
+    last frame when the timestamp is past the reel's end, frame 0 when
+    before its start); ``frame_times`` are the frames' datetimes.
+    Beats are sorted by frame; when two beats land on the same frame
+    the later-listed one wins (the earlier is dropped). The default
+    title (``spec.title``) shows until the first beat.
+    """
+    raw = _validate_headline_beats(headline_beats)
+    if not raw or int(n_frames) <= 0:
+        return []
+    n = int(n_frames)
+    times: List[_dt.datetime] = []
+    if frame_times is not None:
+        times = _as_datetimes(list(frame_times))
+    staged: List[Tuple[int, int, float, str]] = []  # frame, order, frac, text
+    for order, (when, text) in enumerate(raw):
+        if isinstance(when, str):
+            if not times:
+                raise ValueError(
+                    "headline_beats: timestamp beats need the field's "
+                    "frame times to resolve against")
+            beat_t = _parse_beat_timestamp(when, order)
+            frame = n - 1
+            for j, ft in enumerate(times):
+                if ft >= beat_t:
+                    frame = j
+                    break
+            frac = (frame / (n - 1)) if n > 1 else 0.0
+        else:
+            frac = float(when)
+            frame = int(round(frac * (n - 1))) if n > 1 else 0
+            frame = max(0, min(n - 1, frame))
+        staged.append((frame, order, float(frac), text))
+    staged.sort(key=lambda s: (s[0], s[1]))
+    out: List[Dict[str, Any]] = []
+    for frame, _order, frac, text in staged:
+        rec = {"fraction": float(frac), "frame": int(frame), "text": text}
+        if out and out[-1]["frame"] == frame:
+            out[-1] = rec  # same frame: later-listed wins
+        else:
+            out.append(rec)
+    return out
+
+
+def _beat_text_for_frame(normalized: Any, frame_idx: int,
+                         default: str) -> str:
+    """Title text active at ``frame_idx`` (clean cut at each beat)."""
+    text = default
+    for beat in normalized or []:
+        if int(beat["frame"]) <= int(frame_idx):
+            text = str(beat["text"])
+        else:
+            break
+    return text
+
+
+def _counter_stats(np, values: Any, stat: str) -> List[float]:
+    """Per-timestep NaN-aware stat over finite cells (NaN if none)."""
+    if stat not in _COUNTER_STATS:
+        raise ValueError(
+            f"counter stat: expected one of {list(_COUNTER_STATS)}, "
+            f"got {stat!r}")
+    arr = np.asarray(values, dtype=float)
+    if arr.ndim == 2:
+        arr = arr[np.newaxis, :, :]
+    out: List[float] = []
+    for t in range(arr.shape[0]):
+        finite = arr[t][np.isfinite(arr[t])]
+        if finite.size == 0:
+            out.append(float("nan"))
+        elif stat == "sum":
+            out.append(float(np.sum(finite)))
+        elif stat == "mean":
+            out.append(float(np.mean(finite)))
+        else:  # max
+            out.append(float(np.max(finite)))
+    return out
+
+
+def _interpolate_counter_stat(stats: Any, moments: Any,
+                              moment: Any) -> Optional[float]:
+    """Linearly interpolated counter value at ``moment``.
+
+    Interpolation runs between the bracketing *valid* (finite-stat)
+    timesteps, weighted by time; before the first / after the last
+    valid timestep the value clamps to that timestep's stat. A
+    timestep with no finite cells contributes nothing (it is skipped,
+    so the interpolation spans it). All-NaN series -> ``None``.
+    Between observed timesteps the result is a linear *estimate*, not
+    a measurement — docs and the manifest say so.
+    """
+    valid = [(m, float(s)) for m, s in zip(moments or [], stats or [])
+             if s is not None and s == s and _is_finite_number(s)]
+    if not valid:
+        return None
+    if moment is None:
+        return valid[0][1]
+    # Coerce everything to aware datetimes for safe comparison.
+    def _aware(m):
+        if isinstance(m, _dt.datetime):
+            return m if m.tzinfo else m.replace(tzinfo=_dt.timezone.utc)
+        if isinstance(m, _dt.date):
+            return _dt.datetime(m.year, m.month, m.day,
+                                 tzinfo=_dt.timezone.utc)
+        return m
+    t = _aware(moment)
+    pts = [(_aware(m), s) for m, s in valid]
+    if t <= pts[0][0]:
+        return pts[0][1]
+    if t >= pts[-1][0]:
+        return pts[-1][1]
+    for (t0, s0), (t1, s1) in zip(pts, pts[1:]):
+        if t0 <= t <= t1:
+            span = (t1 - t0).total_seconds()
+            if span <= 0:
+                return s1
+            w = (t - t0).total_seconds() / span
+            return s0 + (s1 - s0) * w
+    return pts[-1][1]
+
+
+def _is_finite_number(x: Any) -> bool:
+    try:
+        import math
+        return math.isfinite(float(x))
+    except (TypeError, ValueError):
+        return False
+
+
+def _format_counter_value(value: Any) -> str:
+    """Format a counter value with thousands separators.
+
+    Rule (documented): integral-ish values, and any value with
+    magnitude >= 1000, render as a thousands-separated integer
+    (``1,234,567``); smaller non-integral values render with up to 3
+    significant decimals via ``,.3g`` (``12.3``, ``0.456``). ``None`` /
+    non-finite renders as an em dash.
+    """
+    if value is None or not _is_finite_number(value):
+        return "\u2014"
+    v = float(value)
+    if abs(v) >= 1000 or float(v).is_integer():
+        return f"{int(round(v)):,}"
+    return f"{v:,.3g}"
+
+
+def _orient_north_up(np, grid: Any, lats: Any):
+    """Return ``grid`` with row 0 = north (top), flipping if needed.
+
+    ``render_surface`` expects row 0 = top. Field grids follow the
+    ``_normalize_field`` convention: rows follow ``lats`` as given, so
+    ascending lats (south first) need a vertical flip and descending
+    lats (north first) pass through. This matches how the other
+    presets end up north-up on the canvas (``origin="upper"``).
+    """
+    arr = np.asarray(grid, dtype=float)
+    lat_arr = np.asarray(lats, dtype=float).ravel()
+    if lat_arr.size >= 2 and lat_arr[0] < lat_arr[-1]:
+        return arr[::-1, :].copy()
+    return arr.copy()
+
+
+def _fallback_surface_rgba(np, grid: Any, cmap_name: str, vmin: float,
+                           vmax: float, scale: str, width_px: int,
+                           height_px: int):
+    """Plain colormapped grid as RGBA (the old-peer fallback).
+
+    No contours, no shadow: NaN cells are transparent over the
+    surface background colour, finite cells are colormapped on the
+    reel-wide fixed scale (log-aware). Used only when the peer's
+    ``render_surface`` is unavailable.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib import colors as _mcolors
+    try:
+        cmap_obj = matplotlib.colormaps.get_cmap(cmap_name)
+    except Exception:
+        cmap_obj = matplotlib.colormaps.get_cmap("viridis")
+    arr = np.asarray(grid, dtype=float)
+    # Nearest-neighbour resize to the exact output size (deterministic).
+    ny, nx = arr.shape
+    yi = np.minimum((np.arange(height_px) * ny // max(height_px, 1)), ny - 1)
+    xi = np.minimum((np.arange(width_px) * nx // max(width_px, 1)), nx - 1)
+    small = arr[np.ix_(yi, xi)]
+    if scale == "log":
+        norm = _mcolors.LogNorm(vmin=vmin, vmax=vmax)
+    else:
+        norm = _mcolors.Normalize(vmin=vmin, vmax=vmax)
+    rgba = cmap_obj(norm(np.ma.masked_invalid(small)))
+    rgba = (np.asarray(rgba) * 255.0).astype(np.uint8)
+    # Background where there is no data (render_surface's default bg).
+    bg = np.array([0.012, 0.043, 0.055, 1.0])
+    nodata = ~np.isfinite(small)
+    if np.any(nodata):
+        rgba[nodata] = (bg * 255.0).astype(np.uint8)
+    return rgba
 
 
 # Default place kinds for automatic labels (the gazetteer's own default).
@@ -565,22 +954,27 @@ def _layout_furniture(ctx: Dict[str, Any]) -> Dict[str, Any]:
                 priority=9, shrink=False,
                 alternatives=[(0.06, 0.78, 0.55, 0.05),
                               (0.60, 0.875, 0.34, 0.05)]))
-        if name in ("dark_flow", "dark_strands"):
-            gx, gy, gw, gh = lay["gradient_bar"]
+        if name in ("dark_flow", "dark_strands", "surface"):
+            gx, gy, gw, gh = lay.get(
+                "gradient_bar", (0.60, 0.20, 0.30, 0.012))[:4]
             specs.append(ae.box_spec(
                 "gradient_bar", (gx, gy, gw, gh), priority=6,
                 alternatives=[(0.60, 0.18, gw, gh),
                               (0.06, 0.08, 0.60, gh)]))
-            lx, ly, lw, lh = lay["timeline"]
+            lx, ly, lw, lh = lay.get(
+                "timeline", (0.60, 0.28, 0.30, 0.010))[:4]
             specs.append(ae.box_spec(
                 "timeline", (lx, ly, lw, lh), priority=6,
                 alternatives=[(0.06, 0.05, lw, lh),
                               (0.62, 0.26, lw, lh)]))
-        if name == "dark_glow":
-            cx0, cy0 = lay["counter"][:2]
+        if name == "dark_glow" or (
+                name == "surface" and ctx.get("counter") is not None):
+            cx0, cy0 = lay.get("counter", (0.06, 0.16))[:2]
+            _cw = 0.40 if name == "surface" else 0.32
             specs.append(ae.box_spec(
-                "counter", (cx0, cy0 - 0.05, 0.32, 0.115), priority=7,
-                alternatives=[(0.62, 0.05, 0.32, 0.115)]))
+                "counter", (cx0, cy0 - 0.05, _cw, 0.115), priority=7,
+                alternatives=[(0.55 if name == "surface" else 0.62,
+                               0.05, _cw, 0.115)]))
         if name in ("dark_glow", "paper_prism"):
             dx, dy, dr = lay["date_dial"][:3]
             dw = dh = 2 * dr * _DIAL_PAD
@@ -673,7 +1067,7 @@ class _Furniture:
         preset = self._ctx["preset"]
         return preset.text_color
 
-    def draw_title(self, ax):
+    def draw_title(self, ax, text=None):
         ae = self._ctx["ae"]
         preset, spec = self._ctx["preset"], self._ctx["spec"]
         p = self.placed["title"]
@@ -681,7 +1075,8 @@ class _Furniture:
         # for titles longer than the engine's shrink floor can fit.
         scale = p.scale * _title_fit_scale(
             (p.rect[0], p.rect[1], p.rect[2] * p.scale, p.rect[3]))
-        ae.draw_title(ax, spec.title, p.rect[0], p.rect[1] + p.rect[3],
+        ae.draw_title(ax, spec.title if text is None else text,
+                      p.rect[0], p.rect[1] + p.rect[3],
                       size=preset.title_size * scale,
                       color=preset.text_color)
 
@@ -710,8 +1105,49 @@ class _Furniture:
         if r is None:
             return
         # Box top holds the label; the number's top anchor sits 0.05 in.
+        if isinstance(value, str):
+            # Pre-formatted string (surface counter): ae.counter only
+            # accepts numbers, so draw the same look directly.
+            if label:
+                ax.text(r[0], r[1] + 0.05 + 0.045, str(label).upper(),
+                        transform=ax.transAxes, fontsize=18,
+                        color=self._colors(), alpha=0.7, ha="left",
+                        va="bottom", family="DejaVu Sans Mono", zorder=10)
+            ax.text(r[0], r[1] + 0.05, value, transform=ax.transAxes,
+                    fontsize=56, color=self._colors(), alpha=0.95,
+                    ha="left", va="top", family="DejaVu Sans Mono",
+                    weight="bold", zorder=10)
+            return
         ae.counter(ax, r[0], r[1] + 0.05, value, label=label,
                    color=self._colors())
+
+    def draw_surface_counter(self, ax, readout, value_text, label=""):
+        """Surface counter: big date readout, stat + unit + label beneath.
+
+        Uses the existing counter rect (see ``draw_counter``). The
+        readout reuses ``_readout_label`` formatting (passed in by the
+        caller); the stat line is the pre-formatted
+        ``_format_counter_value`` output plus unit/label.
+        """
+        r = self._rect("counter")
+        if r is None:
+            return
+        x, y, _w, h = r
+        color = self._colors()
+        # Date/timestamp readout on the top line of the counter box.
+        ax.text(x, y + h, readout, transform=ax.transAxes, fontsize=30,
+                color=color, alpha=0.95, ha="left", va="top",
+                family="DejaVu Sans Mono", weight="bold", zorder=10)
+        # Formatted stat (+ unit) beneath it.
+        ax.text(x, y + h - 0.048, value_text, transform=ax.transAxes,
+                fontsize=44, color=color, alpha=0.95, ha="left",
+                va="top", family="DejaVu Sans Mono", weight="bold",
+                zorder=10)
+        if label:
+            ax.text(x, y + h - 0.095, str(label).upper(),
+                    transform=ax.transAxes, fontsize=16, color=color,
+                    alpha=0.7, ha="left", va="top",
+                    family="DejaVu Sans Mono", zorder=10)
 
     def draw_gradient_bar(self, ax, vmin, vmax, label, unit):
         ae = self._ctx["ae"]
@@ -720,6 +1156,34 @@ class _Furniture:
             return
         ae.gradient_bar(ax, r, self._ctx["cmap"], vmin, vmax,
                         label=label, unit=unit, color=self._colors())
+
+    def draw_surface_gradient_bar(self, ax, vmin, vmax, label, unit,
+                                  scale="linear"):
+        """Surface colorbar: gradient bar plus log decade ticks if log.
+
+        Linear: the gradient bar's endpoint labels are the ticks. Log:
+        interior powers of ten between vmin/vmax are labelled under
+        the bar at their log positions (decade ticks), in addition to
+        the endpoints.
+        """
+        self.draw_gradient_bar(ax, vmin, vmax, label, unit)
+        if scale != "log":
+            return
+        r = self._rect("gradient_bar")
+        if r is None or not (vmin > 0 and vmax > vmin):
+            return
+        import math
+        x, y, w, _h = r
+        lo, hi = math.log10(vmin), math.log10(vmax)
+        for decade in range(math.ceil(lo), math.floor(hi) + 1):
+            val = 10.0 ** decade
+            if val <= vmin or val >= vmax:
+                continue
+            frac = (math.log10(val) - lo) / (hi - lo) if hi > lo else 0.5
+            ax.text(x + frac * w, y - 0.006, f"{val:g}{unit}",
+                    transform=ax.transAxes, fontsize=13,
+                    color=self._colors(), alpha=0.9, ha="center",
+                    va="top", family="DejaVu Sans Mono", zorder=10)
 
     def draw_brightness_note(self, ax, text):
         """Bivariate legend note for dark_strands (placement documented).
@@ -1077,6 +1541,10 @@ def _render_dark_flow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
     basemap_style = ctx["basemap_style"]
     subtitle = ctx["subtitle"]
     rw, rh = ctx["render_size"]
+    beats = _normalize_headline_beats(
+        ctx.get("headline_beats"), len(frame_idx),
+        [moments[i] for i in frame_idx])
+    ctx["headline_beats_normalized"] = beats
     # Furniture placed once per reel (static boxes; dial/timeline contents
     # vary per frame).
     ctx["furniture"] = furn = _Furniture(ctx)
@@ -1096,8 +1564,8 @@ def _render_dark_flow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
             _draw_basemap_frac(ax, ae, coastline_segs, spec.bbox,
                                basemap_style)
 
-        def draw_furniture(ax):
-            furn.draw_title(ax)
+        def draw_furniture(ax, _bt=_beat_text_for_frame(beats, n, spec.title)):
+            furn.draw_title(ax, _bt)
             furn.draw_subtitle(ax)
             furn.draw_timeline(ax, moments[frame_idx[0]],
                                moments[frame_idx[-1]], moment)
@@ -1256,6 +1724,10 @@ def _render_dark_strands(ctx: Dict[str, Any]
                            f"BRIGHTNESS = {speed_label.upper()}")
     else:
         ctx["encoding"] = f"COLOR = {scalar_label.upper()}"
+    beats = _normalize_headline_beats(
+        ctx.get("headline_beats"), len(frame_idx),
+        [moments[i] for i in frame_idx])
+    ctx["headline_beats_normalized"] = beats
 
     # Furniture placed once per reel (static boxes; contents vary).
     ctx["furniture"] = furn = _Furniture(ctx)
@@ -1339,8 +1811,9 @@ def _render_dark_strands(ctx: Dict[str, Any]
             _draw_basemap_frac(ax, ae, coastline_segs, spec.bbox,
                                basemap_style, land_mask=land_mask)
 
-        def draw_furniture(ax, _moment=moment):
-            furn.draw_title(ax)
+        def draw_furniture(ax, _moment=moment,
+                           _bt=_beat_text_for_frame(beats, n, spec.title)):
+            furn.draw_title(ax, _bt)
             furn.draw_subtitle(ax)
             furn.draw_timeline(ax, moments[frame_idx[0]],
                                moments[frame_idx[-1]], _moment)
@@ -1537,6 +2010,9 @@ def _render_dark_glow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
     basemap_style = ctx["basemap_style"]
     rw, rh = ctx["render_size"]
     lon0, lat0, lon1, lat1 = (float(v) for v in spec.bbox)
+    beats = _normalize_headline_beats(
+        ctx.get("headline_beats"), len(frame_moments), frame_moments)
+    ctx["headline_beats_normalized"] = beats
     # Furniture placed once per reel (static boxes; dial/counter contents
     # vary per frame).
     ctx["furniture"] = furn = _Furniture(ctx)
@@ -1566,8 +2042,9 @@ def _render_dark_glow(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[s
 
         count = int(shown.sum())
 
-        def draw_furniture(ax, _count=count, _now=now):
-            furn.draw_title(ax)
+        def draw_furniture(ax, _count=count, _now=now,
+                           _bt=_beat_text_for_frame(beats, n, spec.title)):
+            furn.draw_title(ax, _bt)
             furn.draw_subtitle(ax)
             furn.draw_counter(ax, _count, ev["count_label"])
             furn.draw_dial(ax, _now)
@@ -1653,6 +2130,10 @@ def _render_paper_prism(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict
     rw, rh = ctx["render_size"]
     unit = ctx.get("unit") or ""
     var_label = _variable_label(spec.variable)
+    beats = _normalize_headline_beats(
+        ctx.get("headline_beats"), len(frame_idx),
+        [moments[i] for i in frame_idx])
+    ctx["headline_beats_normalized"] = beats
     # Furniture placed once per reel (static boxes; dial contents vary).
     ctx["furniture"] = furn = _Furniture(ctx)
 
@@ -1672,8 +2153,9 @@ def _render_paper_prism(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict
             ax.imshow(_rgba, extent=[0, 1, 0, 1], origin="upper",
                       transform=ax.transAxes, aspect="auto", zorder=1)
 
-        def draw_furniture(ax, _moment=moment):
-            furn.draw_title(ax)
+        def draw_furniture(ax, _moment=moment,
+                           _bt=_beat_text_for_frame(beats, n, spec.title)):
+            furn.draw_title(ax, _bt)
             furn.draw_subtitle(ax)
             furn.draw_scale_bar(ax, vmin, vmax, var_label, unit)
             furn.draw_dial(ax, _moment)
@@ -1689,6 +2171,212 @@ def _render_paper_prism(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict
         "vmin": vmin, "vmax": vmax,
         "prism_grid": [grid_ny, grid_nx],
         "underlay": ctx["underlay_parts"][3],
+    }
+    return frames, timestamps, render_info
+
+
+# ---------------------------------------------------------------------------
+# surface: colored scalar surface over shadowed land (any gridded variable)
+# ---------------------------------------------------------------------------
+
+def _render_surface(ctx: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[str, Any]]:
+    """Render surface frames via ``aesthetics.render_surface``.
+
+    Each frame's grid is oriented north-up (row 0 = top) and rendered
+    through the peer at the reel-wide FIXED vmin/vmax (never per-frame
+    — that flickers). Frames follow the existing preset mechanism:
+    ``_bucket_indices`` picks one timestep per cadence bucket, so a
+    frame is an observed timestep grid, never an invented intermediate
+    grid; only the *counter* interpolates (in value space; for log
+    scale that interpolation is still on the stat, which is computed
+    from the raw values — see ``_counter_stats``). When the peer's
+    ``render_surface`` is unavailable the grid falls back to a plain
+    colormapped rendering (no contours, no shadow) and the manifest
+    records ``peer_fallback: true``.
+    """
+    ae = ctx["ae"]
+    np = _np()
+    spec = ctx["spec"]
+    cname = ctx["cmap"]
+    out = Path(ctx["out_dir"])
+    out.mkdir(parents=True, exist_ok=True)
+
+    from .render import _bucket_indices, _normalize_field, _VARIABLE_UNITS
+    try:
+        from .render import _field_units as _fu
+        field_unit = _fu(ctx["field"])
+    except Exception:
+        field_unit = ""
+    times, lats, lons, values = _normalize_field(ctx["field"])
+    values = np.asarray(values, dtype=float)
+    moments = _as_datetimes(times)
+    dates = [m.date() for m in moments]
+    frame_idx = _bucket_indices(dates, spec.cadence)
+    frame_moments = [moments[i] for i in frame_idx]
+
+    scale = ctx.get("surface_scale", "linear")
+    # Reel-wide fixed scale (never per-frame). Explicit spec ends win.
+    if scale == "log":
+        finite = values[np.isfinite(values)]
+        positive = finite[finite > 0]
+        data_lo = float(np.min(positive)) if positive.size else 1.0
+        data_hi = float(np.max(positive)) if positive.size else 10.0
+    else:
+        data_lo, data_hi = _nanminmax(np, values)
+    vmin = float(spec.vmin) if spec.vmin is not None else float(data_lo)
+    vmax = float(spec.vmax) if spec.vmax is not None else float(data_hi)
+    if scale == "log" and vmin <= 0:
+        raise ValueError(
+            f"surface_scale='log' needs a positive vmin, got {vmin!r} "
+            f"(from spec.vmin or the positive data minimum)")
+    if not vmax > vmin:
+        vmax = vmin * 10.0 if scale == "log" else vmin + 1.0
+
+    var_label = _variable_label(spec.variable)
+    unit = field_unit or _VARIABLE_UNITS.get(spec.variable, "")
+    ctx["encoding"] = f"COLOR = {var_label.upper()}"
+
+    # Land mask (optional): Natural Earth raster, row 0 = north, from
+    # the same fetch dark_strands uses. Unavailable -> None (the
+    # peer then shadows the finite-cell footprint instead).
+    land_mask = None
+    landmask_status: Optional[str] = None
+    landmask_requested = bool(ctx.get("landmask", True))
+    if landmask_requested:
+        try:
+            from .underlay import fetch_landmask
+            lm = fetch_landmask(tuple(float(x) for x in spec.bbox),
+                                lats, lons)
+            landmask_status = lm.get("status")
+            if lm.get("status") == "ok" and lm.get("mask") is not None:
+                cand = np.asarray(lm["mask"], dtype=bool)
+                if cand.shape == values.shape[1:]:
+                    land_mask = cand
+        except Exception:
+            landmask_status = "unavailable"
+            land_mask = None
+
+    surface_fn = _render_surface_fn(ae)
+    peer_fallback = surface_fn is None
+
+    # Counter stats per timestep (NaN-aware), computed once per reel.
+    counter_spec = ctx.get("counter")
+    counter_applied = counter_spec is not None
+    stat_series: List[float] = []
+    if counter_applied:
+        stat_series = _counter_stats(np, values, counter_spec["stat"])
+
+    beats = _normalize_headline_beats(
+        ctx.get("headline_beats"), len(frame_idx), frame_moments)
+    ctx["headline_beats_normalized"] = beats
+
+    _, _, coastline_segs, underlay_status = ctx["underlay_parts"]
+    basemap_style = ctx["basemap_style"]
+    rw, rh = ctx["render_size"]
+    ctx["furniture"] = furn = _Furniture(ctx)
+
+    contour_levels = ctx.get("surface_contour_levels")
+    frames: List[str] = []
+    timestamps: List[str] = []
+    for n, i in enumerate(frame_idx):
+        moment = moments[i]
+        grid = _orient_north_up(np, values[i], lats)
+        if not peer_fallback:
+            rgba = surface_fn(
+                grid, width_px=rw, height_px=rh, cmap=cname,
+                vmin=vmin, vmax=vmax, scale=scale,
+                smoothing=float(ctx.get("surface_smoothing", 0.0)),
+                contours=bool(ctx.get("surface_contours", True)),
+                contour_levels=contour_levels,
+                shadow=bool(ctx.get("surface_shadow", True)),
+                land_mask=land_mask)
+        else:
+            rgba = _fallback_surface_rgba(
+                np, grid, cname, vmin, vmax, scale, rw, rh)
+
+        def draw_map(ax, _rgba=rgba):
+            ax.imshow(_rgba, extent=[0, 1, 0, 1], origin="upper",
+                      transform=ax.transAxes, aspect="auto", zorder=2)
+            _draw_basemap_frac(ax, ae, coastline_segs, spec.bbox,
+                               basemap_style, land_mask=land_mask)
+
+        # Counter: interpolated stat at this frame's time (an estimate
+        # between timesteps, not a measurement).
+        _cval = None
+        _ctext = ""
+        if counter_applied:
+            _cval = _interpolate_counter_stat(stat_series, moments, moment)
+            _formatted = _format_counter_value(_cval)
+            _unit = counter_spec.get("unit") or ""
+            _ctext = f"{_formatted} {_unit}".strip()
+        _readout = _readout_label(moment)
+        _label = (counter_spec.get("label") if counter_applied else "") or ""
+        # Display label beneath the stat: explicit label, else the stat
+        # name; the unit rides on the stat line itself.
+        _sublabel = _label or (counter_spec["stat"].upper()
+                               if counter_applied else "")
+        _beat_text = _beat_text_for_frame(beats, n, spec.title)
+
+        def draw_furniture(ax, _moment=moment, _ctext=_ctext,
+                           _readout=_readout, _sublabel=_sublabel,
+                           _beat_text=_beat_text,
+                           _has_counter=counter_applied):
+            furn.draw_title(ax, _beat_text)
+            furn.draw_subtitle(ax)
+            furn.draw_timeline(ax, frame_moments[0], frame_moments[-1],
+                               _moment)
+            furn.draw_surface_gradient_bar(ax, vmin, vmax, var_label,
+                                           unit, scale=scale)
+            if _has_counter:
+                furn.draw_surface_counter(ax, _readout, _ctext,
+                                          label=_sublabel)
+            furn.draw_north_arrow(ax)
+            furn.draw_encoding(ax)
+            ctx["draw_furniture_common"](ax)
+
+        _write_frame(ctx, n, draw_map, draw_furniture)
+        frames.append(str((out / f"frame_{n + 1:04d}.png").resolve()))
+        timestamps.append(moment.isoformat())
+
+    finite_stats = [s for s in stat_series if s == s]
+    if counter_applied:
+        counter_manifest: Dict[str, Any] = {
+            "spec": counter_spec,
+            "applied": True,
+            "stat_first": (float(finite_stats[0]) if finite_stats else None),
+            "stat_last": (float(finite_stats[-1]) if finite_stats else None),
+            "series": [(float(s) if s == s else None) for s in stat_series],
+            "note": ("between observed timesteps the counter shows "
+                     "linearly interpolated estimates, not measurements"),
+        }
+    else:
+        counter_manifest = {
+            "spec": None, "applied": False,
+            "stat_first": None, "stat_last": None, "series": [],
+        }
+    render_info = {
+        "vmin": vmin, "vmax": vmax,
+        "scalar": f"{var_label} ({unit})" if unit else var_label,
+        "surface": {
+            "cmap": cname,
+            "scale": scale,
+            "vmin": vmin, "vmax": vmax,
+            "contours": bool(ctx.get("surface_contours", True)),
+            "contour_levels": (
+                list(contour_levels) if contour_levels is not None
+                else "auto"),
+            "shadow": bool(ctx.get("surface_shadow", True)),
+            "smoothing": float(ctx.get("surface_smoothing", 0.0)),
+            "peer_fallback": bool(peer_fallback),
+            "land_mask": bool(land_mask is not None),
+        },
+        "landmask": {
+            "requested": landmask_requested,
+            "status": landmask_status,
+        },
+        "counter": counter_manifest,
+        "headline_beats": beats,
+        "underlay": underlay_status,
     }
     return frames, timestamps, render_info
 
@@ -1758,6 +2446,13 @@ def render_preset_viz(
     bivariate: bool = True,
     robust_scale: bool = True,
     salience_labels: bool = True,
+    surface_contours: bool = True,
+    surface_contour_levels: Any = None,
+    surface_shadow: bool = True,
+    surface_smoothing: float = 0.0,
+    surface_scale: str = "linear",
+    counter: Any = None,
+    headline_beats: Any = None,
     # Set by render_viz when it pre-resolves strand_count="auto" to an
     # int (see _resolve_strand_count); direct callers leave it None and
     # the resolution happens here. Internal plumbing, not a user knob.
@@ -1849,6 +2544,32 @@ def render_preset_viz(
             order is kept verbatim. The manifest records
             ``place_labels.label_ranking`` (``"autopilot-salience"`` /
             ``"legacy"``). Preset-path only.
+        surface_contours / surface_contour_levels / surface_shadow /
+        surface_smoothing / surface_scale: ``surface`` preset only —
+            contours (default True) at auto or explicit levels, drop
+            shadow (default True), Gaussian smoothing sigma in output
+            pixels (default 0.0), and ``"linear"``/``"log"`` scale
+            (log is for density-like data spanning orders of
+            magnitude; non-positive cells are no-data). Unknown scales
+            raise ``ValueError``.
+        counter: ``surface`` preset only — ``None`` (default) or
+            ``{"stat": "sum"|"mean"|"max", "unit": str, "label": str}``.
+            The stat is computed per timestep over finite cells only;
+            the value shown at each frame is linearly interpolated
+            between the bracketing timesteps' stats (clamped at the
+            ends) — between observed timesteps it is an *estimate*,
+            not a measurement. Passed with any other preset it is
+            recorded in the manifest as requested-but-not-applied and
+            no counter is drawn.
+        headline_beats: ``None`` (default) or a list of ``(when, text)``
+            pairs, where ``when`` is a float fraction in [0, 1] of the
+            reel or an ISO-8601 timestamp string resolved against the
+            field's frame times. The title swaps with a clean cut at
+            each beat (the default title shows until the first beat;
+            beats are sorted by frame and a later-listed beat wins a
+            shared frame). Any preset. Plain data only — viz never
+            imports survey-narrate; callers may draft beats with
+            ``narrate.headline_beats`` and pass the list in.
 
     Returns ``(frames, manifest_path)`` like :func:`viz.render.render_viz`.
     """
@@ -1862,9 +2583,38 @@ def render_preset_viz(
             f"preset {preset!r} renders {', '.join(allowed)}; "
             f"variable {spec.variable!r} has no compatible data "
             f"(no vector field for dark_flow, no events for dark_glow)")
+    # --- surface / counter / headline-beats validation (fail fast) ---
+    if surface_scale not in ("linear", "log"):
+        raise ValueError(
+            f"surface_scale: expected 'linear' or 'log', got "
+            f"{surface_scale!r}")
+    try:
+        surface_smoothing = float(surface_smoothing)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"surface_smoothing: expected a non-negative number, got "
+            f"{surface_smoothing!r}") from None
+    if surface_smoothing < 0:
+        raise ValueError(
+            f"surface_smoothing: expected a non-negative number, got "
+            f"{surface_smoothing!r}")
+    if surface_contour_levels is not None:
+        try:
+            surface_contour_levels = [float(v) for v in
+                                      surface_contour_levels]
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"surface_contour_levels: expected None or a sequence "
+                f"of numbers, got {surface_contour_levels!r}") from None
+    counter_spec = _validate_counter(counter)
+    # Raw beats are validated here (text/fraction/timestamp syntax);
+    # frame normalization happens in each renderer, which knows the
+    # frame times. Stored as the caller's plain data.
+    _validate_headline_beats(headline_beats)
 
     angle = _resolve_rotation(rotation, spec.bbox)
-    preset_obj = ae.get_preset(preset)
+    preset_obj = (_surface_preset_obj(ae) if preset == "surface"
+                  else ae.get_preset(preset))
     # The dark_strands preset's honesty line names air temperature (the
     # warming.watch wind look); on currents the strands show water
     # temperature — say so. With bivariate=True the strands are also
@@ -1888,7 +2638,13 @@ def render_preset_viz(
     # Basemap style: explicit choice wins; otherwise the preset default.
     if basemap is None:
         basemap_style = preset_obj.basemap
-        basemap_name = preset_obj.basemap.name
+        if basemap_style is None:
+            try:
+                basemap_style = ae.get_basemap("void_black")
+            except Exception:
+                basemap_style = None
+        basemap_name = (basemap_style.name if basemap_style is not None
+                        else "void_black")
     else:
         try:
             basemap_style = ae.get_basemap(basemap)
@@ -2023,6 +2779,14 @@ def render_preset_viz(
         "landmask": landmask,
         "bivariate": bivariate,
         "robust_scale": robust_scale,
+        "surface_contours": surface_contours,
+        "surface_contour_levels": surface_contour_levels,
+        "surface_shadow": surface_shadow,
+        "surface_smoothing": surface_smoothing,
+        "surface_scale": surface_scale,
+        "counter": counter_spec,
+        "counter_requested": counter,
+        "headline_beats": headline_beats,
         "place_canvas_labels": canvas_labels,
     }
 
@@ -2032,6 +2796,8 @@ def render_preset_viz(
         frames, timestamps, info = _render_dark_glow(ctx)
     elif preset == "dark_strands":
         frames, timestamps, info = _render_dark_strands(ctx)
+    elif preset == "surface":
+        frames, timestamps, info = _render_surface(ctx)
     else:
         frames, timestamps, info = _render_paper_prism(ctx)
 
@@ -2082,6 +2848,24 @@ def render_preset_viz(
             "engine": (f"survey-viz {_viz_version()} + "
                        f"survey-aesthetics {_aesthetics_version()}"),
             "created": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            # surface / counter / headline beats (v0.28.0). The
+            # surface renderer overrides all three via ``info``; other
+            # presets keep these honest defaults (counter requested on
+            # a non-surface preset is recorded as not applied).
+            "surface": (info.get("surface") if preset == "surface"
+                        else None),
+            "counter": (
+                info.get("counter") or {
+                    "spec": counter_spec,
+                    "applied": False,
+                    "stat_first": None,
+                    "stat_last": None,
+                    "note": ("requested but not applied — counter is "
+                             "surface-preset only"
+                             if counter_spec is not None else
+                             "not requested"),
+                }),
+            "headline_beats": ctx.get("headline_beats_normalized", []),
             **info,
         },
     }

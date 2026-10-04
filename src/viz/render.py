@@ -720,6 +720,13 @@ def render_viz(
     bivariate: bool = True,
     robust_scale: bool = True,
     salience_labels: bool = True,
+    surface_contours: bool = True,
+    surface_contour_levels: Any = None,
+    surface_shadow: bool = True,
+    surface_smoothing: float = 0.0,
+    surface_scale: str = "linear",
+    counter: Any = None,
+    headline_beats: Any = None,
 ) -> Tuple[List[str], str]:
     """Render a VizSpec into PNG frames + a frame manifest.
 
@@ -820,6 +827,30 @@ def render_viz(
     gazetteer order is kept verbatim. The manifest records
     ``place_labels.label_ranking`` (``"autopilot-salience"`` /
     ``"legacy"``). Preset-path only.
+
+    ``surface_*`` options configure the ``surface`` preset (v0.28.0):
+    a colored scalar surface over a shadowed land/footprint silhouette
+    via survey-aesthetics ``render_surface`` (default cmap
+    ``teal_pink``; ``surface_scale="log"`` for density-like data,
+    ``surface_contours``/``surface_shadow`` on by default,
+    ``surface_smoothing`` Gaussian sigma in output pixels). Reel-wide
+    fixed vmin/vmax — never per-frame. When ``render_surface`` is
+    unavailable (peer < 0.4.0) the preset falls back to a plain
+    colormapped grid and records ``peer_fallback`` in the manifest.
+
+    ``counter`` (surface preset only) is ``None`` or
+    ``{"stat": "sum"|"mean"|"max", "unit": str, "label": str}``: a
+    per-timestep NaN-aware stat, linearly interpolated between
+    bracketing timesteps at each frame (clamped at the ends) and drawn
+    under a big date readout. Between observed timesteps the counter
+    shows linearly interpolated *estimates*, not measurements. On any
+    other preset it is recorded as requested-but-not-applied.
+
+    ``headline_beats`` is ``None`` or a list of ``(when, text)`` pairs
+    (``when`` = fraction in [0, 1] of the reel, or an ISO-8601
+    timestamp resolved against the frame times): the title swaps with
+    a clean cut at each beat on any preset. Plain data — viz never
+    imports survey-narrate (reel-studio may draft beats with it).
     """
     if layout != "reel-vertical":
         raise ValueError(f"Unknown layout: {layout!r} (only 'reel-vertical' in v0.1.0)")
@@ -838,15 +869,22 @@ def render_viz(
         # default True are no-ops on the legacy renderer.)
         or (isinstance(place_labels, (list, tuple)) and len(place_labels) > 0)
         or max_labels != 8 or min_population != 0 or bivariate is not True
-        or robust_scale is not True or salience_labels is not True)
+        or robust_scale is not True or salience_labels is not True
+        or surface_contours is not True or surface_contour_levels is not None
+        or surface_shadow is not True or surface_smoothing != 0.0
+        or surface_scale != "linear" or counter is not None
+        or headline_beats is not None)
     if preset_requested:
         if preset is None:
             raise ValueError(
                 "rotation/watermark/subtitle/encoding_line/basemap/"
                 "strand_count/strand_linewidth/place_labels/"
                 "max_labels/min_population/bivariate/robust_scale/"
-                "salience_labels need "
-                "preset='dark_flow'/'dark_glow'/'paper_prism'/'dark_strands' "
+                "salience_labels/surface_contours/surface_contour_levels/"
+                "surface_shadow/surface_smoothing/surface_scale/counter/"
+                "headline_beats need "
+                "preset='dark_flow'/'dark_glow'/'paper_prism'/'dark_strands'/"
+                "'surface' "
                 "— they are preset-path options with no meaning on the "
                 "legacy renderer")
         if story_captions:
@@ -874,7 +912,14 @@ def render_viz(
             strand_count_method=strand_count_method,
             strand_linewidth=strand_linewidth, landmask=landmask,
             bivariate=bivariate, robust_scale=robust_scale,
-            salience_labels=salience_labels)
+            salience_labels=salience_labels,
+            surface_contours=surface_contours,
+            surface_contour_levels=surface_contour_levels,
+            surface_shadow=surface_shadow,
+            surface_smoothing=surface_smoothing,
+            surface_scale=surface_scale,
+            counter=counter,
+            headline_beats=headline_beats)
     style = style or spec.style
     if style not in _STYLE:
         raise ValueError(f"Unknown style: {style!r} (expected one of {sorted(_STYLE)})")

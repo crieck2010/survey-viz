@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0] - 2026-10-04
+
+### Added
+- **`surface` aesthetic preset** (any continuous gridded variable):
+  a colored scalar surface over a shadowed land/footprint silhouette
+  via the survey-aesthetics v0.4.0 `render_surface` engine. Default
+  cmap is the new registered `teal_pink` ramp (any matplotlib cmap
+  still works via the existing `cmap=` override). New kwargs on
+  `render_viz` / `render_preset_viz`: `surface_contours=True`,
+  `surface_contour_levels=None` (auto), `surface_shadow=True`,
+  `surface_smoothing=0.0` (Gaussian sigma in output pixels), and
+  `surface_scale="linear"` (`"log"` for density-like data spanning
+  orders of magnitude — non-positive cells are no-data; unknown
+  scales raise `ValueError`). The color scale is reel-wide FIXED
+  vmin/vmax computed once from the whole stack (explicit
+  `spec.vmin`/`vmax` win), so frames never flicker; grids are
+  oriented north-up (row 0 = top) before rendering. A Natural Earth
+  land mask is passed when available (`landmask=True`, the existing
+  switch); otherwise the peer shadows the finite-cell footprint.
+  Log scale draws decade ticks on the gradient-bar colorbar.
+  Graceful fallback: when `render_surface` is unavailable (peer
+  < 0.4.0) the preset renders a plain colormapped grid (no contours,
+  no shadow) and the manifest records
+  `surface.peer_fallback: true` — never a crash for an old peer.
+- **Animated counter** (`counter=`, surface preset only): `None` or
+  `{"stat": "sum"|"mean"|"max", "unit": str, "label": str}`. The stat
+  is computed per timestep over finite cells only (NaN-aware; an
+  all-NaN timestep contributes nothing) and linearly interpolated
+  between the bracketing timesteps' stats at each frame, clamped at
+  the ends. Display is a big date/timestamp readout with the
+  formatted stat (thousands separators; integers for large /
+  integral values, up to 3 significant decimals otherwise) + unit +
+  label beneath it, drawn in the existing counter furniture rect.
+  **Between observed timesteps the counter shows linearly
+  interpolated estimates, not measurements.** Passed with any other
+  preset it is recorded in the manifest as requested-but-not-applied
+  and no counter is drawn.
+- **Headline beats** (`headline_beats=`, any preset): a list of
+  `(when, text)` pairs where `when` is a float fraction in [0, 1] of
+  the reel or an ISO-8601 timestamp string resolved to the nearest
+  frame at/after it. The title swaps with a clean cut at each beat
+  (default title until the first beat; beats sorted by frame; a
+  later-listed beat wins a shared frame). Beats are plain data —
+  survey-viz never imports survey-narrate; reel-studio may draft
+  them with `narrate.headline_beats` (survey-narrate v0.2.0) and
+  pass the list in. Invalid beats raise `ValueError` before any
+  frame renders.
+- Manifest: `render.surface` {cmap, scale, vmin, vmax, contours,
+  contour_levels (list or `"auto"`), shadow, smoothing,
+  peer_fallback, land_mask}, `render.counter` {spec, applied,
+  stat_first, stat_last, series, note}, and
+  `render.headline_beats` (normalized `{fraction, frame, text}`
+  list) on every preset render.
+
+### Changed
+- `survey-aesthetics` dependency pin raised to v0.4.0 (the
+  `render_surface` / `teal_pink` surface engine did not exist in
+  v0.3.0).
+- `AESTHETIC_PRESETS` now includes `"surface"`;
+  `PRESET_VARIABLES["surface"] is None` (any continuous gridded
+  variable).
+
 ## [0.27.0] - 2026-10-01
 
 ### Added
